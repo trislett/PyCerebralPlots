@@ -323,34 +323,14 @@ def plot_freesurfer_annotation_wireframe(v, f, freesurfer_annotation_path):
 	surf.module_manager.scalar_lut_manager.lut.table = sc_cmap_array
 	surf.actor.actor.force_opaque = True
 
-atlas_values = values[:179]
-
-surface_path = 'lh.inflated'
-freesurfer_annotation_path = '/home/tris/scripts/pyggseg/pyggseg/static/lh.hcp-mmp-b-fix.annot'
-freesurfer_annotation_path = '/home/tris/scripts/pyggseg/pyggseg/static/rh.hcp-mmp-b-fix.annot'
-
-
-from mayavi import mlab
-import numpy as np
-
-n = 100 # number of points
-rgba = np.random.randint(0, 256, size=(n, 4), dtype=np.uint8)
-rgba[:, -1] = 255 # no transparency
-pts = mlab.pipeline.scalar_scatter(x, y, z) # plot the points
-pts.add_attribute(rgba, 'colors') # assign the colors to each point
-pts.data.point_data.set_active_scalars('colors')
-g = mlab.pipeline.glyph(pts)
-g.glyph.glyph.scale_factor = 0.1 # set scaling for all the points
-g.glyph.scale_mode = 'data_scaling_off' # make all the points same size
-
-mlab.show()
-
-
-
-def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path, atlas_values = None, add_wireframe = True):
+def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path, atlas_values = None, cmap_array = None, add_wireframe = True, uniform_lighting = True, vmin = None, vmax = None, autothreshold_scalar = False, autothreshold_alg= 'yen_abs', absmin = None, absminmax = False, niter_surface_smooth = 0, save_figure = None, save_figure_orientation = 'x', output_format = 'png', output_transparent_background = True, color_bar_label = None):
+	if save_figure is not None:
+		mlab.options.offscreen = True
 	labels, ctab, names = nib.freesurfer.read_annot(freesurfer_annotation_path)
 	roi_indices = np.unique(labels)[1:]
 	v, f = convert_fs(surface_path)
+	if niter_surface_smooth > 0:
+		v, f = vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = niter_surface_smooth)
 	if atlas_values is None:
 		roi_indices = np.unique(labels)
 		colors = ctab[roi_indices][:,:3]
@@ -368,9 +348,21 @@ def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path, at
 		surf.module_manager.scalar_lut_manager.lut.table = cmap_array
 		surf.actor.mapper.interpolate_scalars_before_mapping = 0
 	else:
+		assert cmap_array is not None, "Error: a cmap_array must be provided for plotting atlas_values"
 		scalar_data = np.zeros((len(labels)))
 		for r, roi in enumerate(roi_indices):
 			scalar_data[labels==roi] = atlas_values[r]
+		if autothreshold_scalar:
+			vmin, vmax = perform_autothreshold(scalar_data, threshold_type = autothreshold_alg)
+		if absmin is not None:
+			scalar_data[np.abs(scalar_data) < absmin] = 0
+		if vmin is None:
+			vmin = np.nanmin(invol)
+		if vmax is None:
+			vmax = np.nanmax(invol)
+		if absminmax:
+			vmax = np.max([np.abs(vmin), np.abs(vmax)])
+			vmin = -np.max([np.abs(vmin), np.abs(vmax)])
 		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
 			scalars = scalar_data, 
 			vmin = vmin,
@@ -417,15 +409,19 @@ def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path, at
 			savename = '%s_isometric.%s'  % (save_figure, output_format)
 			mlab.savefig(savename, magnification=4)
 			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		write_colorbar(output_basename = save_figure,
-							cmap_array = cmap_array,
-							vmax = vmax,
-							vmin = vmin,
-							colorbar_label = None,
-							output_format = 'png',
-							abs_colorbar = False,
-							n_ticks = 11,
-							orientation='vertical')
+		if atlas_values is not None:
+			write_colorbar(output_basename = save_figure,
+								cmap_array = cmap_array,
+								vmax = vmax,
+								vmin = vmin,
+								colorbar_label = None,
+								output_format = 'png',
+								abs_colorbar = False,
+								n_ticks = 11,
+								orientation='vertical')
+		else:
+			pass
+			#TODO add saving a plot of parcel values
 		mlab.clf()
 		mlab.options.offscreen = False
 

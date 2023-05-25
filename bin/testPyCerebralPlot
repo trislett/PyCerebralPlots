@@ -1,0 +1,21 @@
+#!/usr/bin/env python
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import nibabel as nib
+from PyCerebralPlots.functions import visualize_freesurfer_annotation
+
+scriptwd = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+surface_path = "%s/PyCerebralPlots/static/flat_lh.srf" % scriptwd
+freesurfer_annotation_path = "%s/PyCerebralPlots/static/lh.hcp-mmp-b-fix.annot" % scriptwd
+
+
+visualize_freesurfer_annotation(surface_path = surface_path,
+										freesurfer_annotation_path = freesurfer_annotation_path,
+										add_wireframe = True,
+										uniform_lighting = True)
+
+
+
