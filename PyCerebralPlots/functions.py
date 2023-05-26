@@ -34,6 +34,7 @@ from scipy import ndimage
 from scipy.special import erf
 from skimage import filters, measure
 from mayavi import mlab
+from warnings import warn
 
 def check_byteorder(arr):
 	"""
@@ -85,7 +86,7 @@ def create_rywlbb_gradient_cmap(linear_alpha = False, return_array = True):
 			cmap._lut[:256, -1] = np.abs(np.linspace(-1, 1, 256))
 		return(cmap)
 
-def create_ryw_gradient_cmap(linear_alpha = False):
+def create_ryw_gradient_cmap(linear_alpha = False, return_array = True):
 	colors = ["white", "#ffec19", "#ffc100", "#ff9800", "#ff5607", "#f6412d"]
 	cmap = LinearSegmentedColormap.from_list("ryw_gradient", colors)
 	cmap._init()  # Initialize the colormap
@@ -102,7 +103,7 @@ def create_ryw_gradient_cmap(linear_alpha = False):
 			cmap._lut[:256, -1] = np.linspace(0, 1, 256)
 		return(cmap)
 
-def create_lbb_gradient_cmap(linear_alpha = False):
+def create_lbb_gradient_cmap(linear_alpha = False, return_array = True):
 	colors = ["white", "#87CEFB", "#659BDF", "#4467C4", "#2234A8", "#00008C"]
 	cmap = LinearSegmentedColormap.from_list("lbb_gradient", colors)
 	cmap._init()  # Initialize the colormap
@@ -323,6 +324,24 @@ def plot_freesurfer_annotation_wireframe(v, f, freesurfer_annotation_path):
 	surf.module_manager.scalar_lut_manager.lut.table = sc_cmap_array
 	surf.actor.actor.force_opaque = True
 
+def create_annot_legend(labels, rgb_values, output_basename, num_columns = None, output_format = 'png', ratio = 4):
+	num_boxes = len(labels)
+	if num_columns is None:
+		num_columns = int(np.sqrt(num_boxes / ratio))
+	num_rows = np.ceil(num_boxes / num_columns)
+	fig, ax = plt.subplots()
+	ax.set_axis_off()
+	handles = []
+	colors = [tuple(val / 255 for val in rgb) for rgb in rgb_values]  # Normalize RGB values to range 0-1
+	for color, label in zip(colors, labels):
+		handles.append(plt.Rectangle((0, 0), 1, 1, fc=color))
+	ax.legend(handles, labels, loc='center', ncol=num_columns, frameon=False)
+	plt.xlim(0, num_columns)
+	plt.ylim(0, num_rows)
+	plt.tight_layout()
+	plt.savefig("%s_annot_legend.%s" % (output_basename, output_format), transparent = True)
+	plt.close()
+
 def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path, atlas_values = None, cmap_array = None, add_wireframe = True, uniform_lighting = True, vmin = None, vmax = None, autothreshold_scalar = False, autothreshold_alg= 'yen_abs', absmin = None, absminmax = False, niter_surface_smooth = 0, save_figure = None, save_figure_orientation = 'x', output_format = 'png', output_transparent_background = True, color_bar_label = None):
 	if save_figure is not None:
 		mlab.options.offscreen = True
@@ -357,9 +376,9 @@ def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path, at
 		if absmin is not None:
 			scalar_data[np.abs(scalar_data) < absmin] = 0
 		if vmin is None:
-			vmin = np.nanmin(invol)
+			vmin = np.nanmin(scalar_data)
 		if vmax is None:
-			vmax = np.nanmax(invol)
+			vmax = np.nanmax(scalar_data)
 		if absminmax:
 			vmax = np.max([np.abs(vmin), np.abs(vmax)])
 			vmin = -np.max([np.abs(vmin), np.abs(vmax)])
@@ -420,8 +439,7 @@ def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path, at
 								n_ticks = 11,
 								orientation='vertical')
 		else:
-			pass
-			#TODO add saving a plot of parcel values
+			create_annot_legend(labels = names, rgb_values = ctab[roi_indices][:,:3], output_basename = save_figure)
 		mlab.clf()
 		mlab.options.offscreen = False
 
@@ -443,14 +461,53 @@ def plot_freesurfer_annotation_wireframe2(v, f, freesurfer_annotation_path):
 	surf.module_manager.scalar_lut_manager.lut.table = sc_cmap_array
 	surf.actor.actor.force_opaque = True
 
-def both_hemisphere_autothreshold_mgh(lh_mgh_image, rh_mgh_image, autothreshold_alg = 'yen_abs'):
-	data = np.concatenate((np.squeeze(nib.load(lh_mgh_image).get_fdata()), np.squeeze(nib.load(rh_mgh_image).get_fdata())))
+def autothreshold_both_hemispheres_mgh(lh_mgh_image, rh_mgh_image, autothreshold_alg = 'yen_abs'):
+	"""
+	Applies automatic thresholding to both hemispheres of an MGH image.
+
+	This function loads the MGH images for both the left and right hemispheres,
+	concatenates their data arrays, and performs automatic thresholding using the
+	specified algorithm. The minimum and maximum threshold values are then returned.
+
+	Example usage:
+	lh_mgh_image = 'path/to/left_hemisphere.mgh'
+	rh_mgh_image = 'path/to/right_hemisphere.mgh'
+	vmin, vmax = autothreshold_both_hemispheres_mgh(lh_mgh_image, rh_mgh_image, autothreshold_alg='yen_abs')
+
+	Parameters
+	----------
+		lh_mgh_image : str
+			Path to the left hemisphere MGH image file.
+		rh_mgh_image : str
+			Path to the right hemisphere MGH image file.
+		autothreshold_alg : str, optional
+			Autothreshold algorithm to use. Default is 'yen_abs'.
+
+	Returns
+	-------
+		vmin : float
+			Minimum threshold value calculated using the specified autothreshold algorithm.
+		vmax : float
+			Maximum threshold value calculated using the specified autothreshold algorithm.
+	"""
+	lh_data = nib.load(lh_mgh_image).get_fdata()
+	rh_data = nib.load(rh_mgh_image).get_fdata()
+	if (lh_data.ndim == 4) or (rh_data.ndim == 4):
+		warn("Multiple volumes detected. Thresholding will be performed on all volumes.")
+	data = np.concatenate((np.squeeze(lh_data), np.squeeze(rh_data)))
 	vmin, vmax = perform_autothreshold(data, threshold_type = autothreshold_alg)
 	return(vmin, vmax)
 
 def visualize_surface_with_scalar_data(surface, mgh_image = None, cmap_array = None, vmin = None, vmax = None, autothreshold_scalar = False, autothreshold_alg= 'yen_abs', absmin = None, absminmax = False, transparent = False, save_figure = None, save_figure_orientation = 'x', output_format = 'png', output_transparent_background = True, color_bar_label = None, niter_surface_smooth = 0, render_annotation_wireframe_path = None, uniform_lighting = False):
 	"""
 	Renders a freesurfer surface with optional scalar data using Mayavi. The surface will be interactively rendered if the save_figure is None.
+
+	Example usage:
+	_ = visualize_surface_with_scalar_data(surface = os.environ['SUBJECTS_DIR'] + '/fsaverage/surf/lh.pial_semi_inflated',
+																	mgh_image = "lh_statistic.mgh"
+																	cmap_array = create_rywlbb_gradient_cmap()
+																	autothreshold_scalar = True,
+																	absminmax = True)
 
 	Parameters
 	----------
@@ -490,7 +547,8 @@ def visualize_surface_with_scalar_data(surface, mgh_image = None, cmap_array = N
 			The path to the Freesurfer annotation. This option will add dark grey outline of the annotation as a wireframe. Defaults to None.
 	Returns
 	-------
-		None
+		surf : object
+			The mayavi scene instance
 	"""
 	if save_figure is not None:
 		mlab.options.offscreen = True
@@ -579,13 +637,14 @@ def visualize_surface_with_scalar_data(surface, mgh_image = None, cmap_array = N
 							orientation='vertical')
 		mlab.clf()
 		mlab.options.offscreen = False
+	return(surf)
 
 # os.environ['FSLDIR']
 #nifti_image_path = '/mnt/raid1/projects/tris/RESULTS_WRITEUP_SCCA/08MAY2023/EmotionalFaceTask_loading_comp3_tfce_rs.nii.gz'
 #render_mask_volume = '/mnt/raid1/projects/tris/RESULTS_WRITEUP_SCCA/08MAY2023/NEWSURF/MNI152_T1_1mm_brain.nii.gz'
 #visualize_volume_to_surface(nifti_image_path = 'EmotionalFaceTask_loading_comp3_tfce_rs.nii.gz', cmap_array = create_rywlbb_gradient_cmap(), absminmax = True, render_mask_volume = 'NEWSURF/MNI152_T1_1mm_brain.nii.gz', save_figure = 'EmotionalFaceTask_loading_comp3_tfce_rs',save_figure_orientation = 'xz', autothreshold_scalar = True, volume_opacity = 0.8, niter_surface_smooth = 0, niter_surface_smooth_render_mask = 8)
 
-def visualize_volume_iso_surface(nifti_image_path, cmap_array, nifti_image_mask = None,  volume_opacity = 0.8, vmin = None, vmax = None, autothreshold_scalar = False, autothreshold_alg= 'yen_abs', absmin = None, absminmax = False, render_mask_volume = None, binarize_render_mask_volume = True, render_mask_volume_opacity = 0.8, save_figure = None, save_figure_orientation = 'xz', output_format = 'png', output_transparent_background = True, color_bar_label = None, niter_surface_smooth = 0, niter_surface_smooth_render_mask = 0):
+def visualize_volume_iso_surface(nifti_image_path, cmap_array, nifti_image_mask = None,  vmin = None, vmax = None, volume_opacity = 0.8, n_contours = 11, autothreshold_scalar = False, autothreshold_alg= 'yen_abs', absmin = None, absminmax = False, render_mask_volume = None, binarize_render_mask_volume = True, render_mask_volume_opacity = 0.8, save_figure = None, save_figure_orientation = 'xz', output_format = 'png', output_transparent_background = True, color_bar_label = None, niter_surface_smooth = 0, niter_surface_smooth_render_mask = 0):
 	"""
 	Visualizes a 3D volume as an iso-surface using Mayavi's mlab module.
 
@@ -597,12 +656,14 @@ def visualize_volume_iso_surface(nifti_image_path, cmap_array, nifti_image_mask 
 			Colormap array for the iso-surface visualization.
 		nifti_image_mask : str, optional
 			Path to the NIfTI mask file. (default: None)
-		volume_opacity : float, optional
-			Opacity of the volume visualization. (default: 0.8)
 		vmin : float, optional
 			Minimum value for the scalar data. (default: None)
 		vmax : float, optional
 			Maximum value for the scalar data. (default: None)
+		volume_opacity : float, optional
+			Opacity of the volume visualization. (default: 0.8)
+		n_contours : int, optional
+			Number of contours to display
 		autothreshold_scalar : bool, optional
 			Flag to enable automatic thresholding of the scalar data. (default: False)
 		autothreshold_alg : str, optional
@@ -658,7 +719,11 @@ def visualize_volume_iso_surface(nifti_image_path, cmap_array, nifti_image_mask 
 		vmax = np.max([np.abs(vmin), np.abs(vmax)])
 		vmin = -np.max([np.abs(vmin), np.abs(vmax)])
 	src = apply_affine_to_scalar_field(data, affine = invol.affine)
-	surf = mlab.pipeline.iso_surface(src, vmin=vmin, vmax=vmax, opacity = volume_opacity, contours=n_contours)
+	surf = mlab.pipeline.iso_surface(src,
+												vmin=vmin,
+												vmax=vmax,
+												opacity = volume_opacity,
+												contours = n_contours)
 	surf.module_manager.scalar_lut_manager.lut.table = cmap_array
 	surf.actor.mapper.interpolate_scalars_before_mapping = 1
 	surf.module_manager.scalar_lut_manager.lut.table = cmap_array
@@ -727,6 +792,7 @@ def visualize_volume_iso_surface(nifti_image_path, cmap_array, nifti_image_mask 
 							orientation='vertical')
 		mlab.clf()
 		mlab.options.offscreen = False
+	return(surf)
 
 def visualize_volume_to_surface(nifti_image_path, cmap_array, nifti_image_mask = None,  volume_opacity = 0.8, vmin = None, vmax = None, autothreshold_scalar = False, autothreshold_alg= 'yen_abs', absmin = None, absminmax = False, render_mask_volume = None, binarize_render_mask_volume = True, render_mask_volume_opacity = 0.8, save_figure = None, save_figure_orientation = 'xz', output_format = 'png', output_transparent_background = True, color_bar_label = None, niter_surface_smooth = 0, niter_surface_smooth_render_mask = 0):
 	"""
@@ -888,6 +954,7 @@ def visualize_volume_to_surface(nifti_image_path, cmap_array, nifti_image_mask =
 							orientation='vertical')
 		mlab.clf()
 		mlab.options.offscreen = False
+	return(surf)
 
 def visualize_volume_contour_with_scalar_data(nifti_image_path = None, nifti_image_mask = None, cmap_array = None, volume_opacity = 0.8, n_contours = 20, vmin = None, vmax = None, autothreshold_scalar = False, autothreshold_alg= 'yen_abs', absmin = None, absminmax = False, render_mask_volume = None, save_figure = None, save_figure_orientation = 'xz', output_format = 'png', color_bar_label = None, niter_surface_smooth = 10):
 	if save_figure is not None:
@@ -991,6 +1058,7 @@ def visualize_volume_contour_with_scalar_data(nifti_image_path = None, nifti_ima
 							orientation='vertical')
 		mlab.clf()
 		mlab.options.offscreen = False
+	return(surf)
 
 def write_colorbar(output_basename, cmap_array, vmax, vmin = None, colorbar_label = None, output_format = 'png', abs_colorbar = False, n_ticks = 11, orientation='vertical'):
 	"""
@@ -1037,11 +1105,11 @@ def write_colorbar(output_basename, cmap_array, vmax, vmin = None, colorbar_labe
 	plt.savefig("%s_colorbar.%s" % (output_basename, output_format), transparent = True)
 	plt.close()
 
-def screenshot_scene(output_basename, savesnapshots = ['x'], output_format = 'png'):
+def screenshot_scene(surf, output_basename, save_figure_orientation = 'x', output_format = 'png'):
 	surf.scene.parallel_projection = True
 	surf.scene.background = (0,0,0)
 	surf.scene.x_minus_view()
-	if 'x' in opts.savemode[0]:
+	if 'x' in save_figure_orientation:
 		savename = '%s_left.%s'  % (output_basename, output_format)
 		mlab.savefig(savename, magnification=4)
 		correct_image(savename)
@@ -1049,7 +1117,7 @@ def screenshot_scene(output_basename, savesnapshots = ['x'], output_format = 'pn
 		savename = '%s_right.%s'  % (output_basename, output_format)
 		mlab.savefig(savename, magnification=4)
 		correct_image(savename)
-	if 'y' in opts.savemode[0]:
+	if 'y' in save_figure_orientation:
 		surf.scene.y_minus_view()
 		savename = '%s_posterior.%s'  % (output_basename, output_format)
 		mlab.savefig(savename, magnification=4)
@@ -1058,7 +1126,7 @@ def screenshot_scene(output_basename, savesnapshots = ['x'], output_format = 'pn
 		savename = '%s_anterior.%s'  % (output_basename, output_format)
 		mlab.savefig(savename, magnification=4)
 		correct_image(savename, rotate = 90, b_transparent = True)
-	if 'z' in opts.savemode[0]:
+	if 'z' in save_figure_orientation:
 		surf.scene.z_minus_view()
 		savename = '%s_inferior.%s'  % (output_basename, output_format)
 		mlab.savefig(savename, magnification=4)
@@ -1067,7 +1135,7 @@ def screenshot_scene(output_basename, savesnapshots = ['x'], output_format = 'pn
 		savename = '%s_superior.%s'  % (output_basename, output_format)
 		mlab.savefig(savename, magnification=4)
 		correct_image(savename)
-	if 'iso' in opts.savemode[0]:
+	if 'iso' in save_figure_orientation:
 		surf.scene.isometric_view()
 		savename = '%s_isometric.%s'  % (output_basename, output_format)
 		mlab.savefig(savename, magnification=4)
@@ -1193,7 +1261,7 @@ def linear_cm(c0,c1,c2 = None):
 	else:
 		for i in range(3):
 			c_map[:,i] = np.linspace(c0[i],c1[i],256)
-	return c_map
+	return(c_map)
 
 
 # log function look-up tables
@@ -1206,13 +1274,12 @@ def log_cm(c0,c1,c2 = None):
 	else:
 		for i in range(3):
 			c_map[:,i] = np.geomspace(c0[i] + 1,c1[i] + 1,256)-1
-	return c_map
+	return(c_map)
 
 
 # error function look-up tables
 def erf_cm(c0,c1,c2 = None):
 	c_map = np.zeros((256,3))
-	weights = erf(np.linspace(0,3,255))
 	if c2 is not None:
 		for i in range(3):
 			c_map[0:128,i] = erf(np.linspace(3*(c0[i]/255),3*(c1[i]/255),128)) * 255
@@ -1221,8 +1288,7 @@ def erf_cm(c0,c1,c2 = None):
 		for i in range(3):
 			#c_map[:,i] = erf(np.linspace(0,3,256)) * np.linspace(c0[i], c1[i], 256)
 			c_map[:,i] = erf(np.linspace(3*(c0[i]/255),3*(c1[i]/255),256)) * 255 
-	return c_map
-
+	return(c_map)
 
 # display the luts included in matplotlib and the customs luts from tmi_viewer
 def display_matplotlib_luts():
@@ -1251,6 +1317,10 @@ def display_matplotlib_luts():
 	maps.append('tm-logBluGry')
 	maps.append('tm-logRedYel')
 	maps.append('tm-erfRGB')
+	maps.append('rywlbb')
+	maps.append('ryw')
+	maps.append('lbb')
+	
 	nmaps = len(maps) + 1
 
 	fig = plt.figure(figsize=(8,12))
@@ -1294,6 +1364,15 @@ def display_matplotlib_luts():
 			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
 		elif m == 'tm-octopus':
 			cmap_array = linear_cm([255,204,204],[255,0,255],[102,0,0]) / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'rywlbb':
+			cmap_array = create_rywlbb_gradient_cmap() / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'ryw':
+			cmap_array = create_ryw_gradient_cmap() / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'lbb':
+			cmap_array = create_lbb_gradient_cmap() / 255
 			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
 		else:
 			plt.imshow(a, aspect='auto', cmap=plt.get_cmap(m), origin='lower')
@@ -1382,7 +1461,7 @@ def correct_image(img_name, rotate = None, b_transparent = True, flip = False, c
 	imageio.imsave(img_name, img)
 
 # add coordinates to the image slices
-def add_text_to_img(image_file, add_txt, opacity = 200, color = [0,0,0]):
+def add_text_to_img(image_file, add_txt, alpha_int = 200, color = [0,0,0]):
 	from PIL import Image, ImageDraw, ImageFont
 	base = Image.open(image_file).convert('RGBA')
 	txt = Image.new('RGBA', base.size, (255,255,255,0))
@@ -1390,10 +1469,8 @@ def add_text_to_img(image_file, add_txt, opacity = 200, color = [0,0,0]):
 	fnt_size = int(numpixels / 16) # scale the font
 	fnt = ImageFont.truetype('Pillow/Tests/fonts/FreeMono.ttf', fnt_size)
 	start = int(numpixels - (.875 * numpixels))
-	stop = int(.875 * numpixels)
-
 	d = ImageDraw.Draw(txt)
-	d.text((start,start), str(add_txt), font=fnt, fill=(color[0],color[1],color[2],opacity))
+	d.text((start,start), str(add_txt), font=fnt, fill=(color[0],color[1],color[2],alpha_int))
 	out = Image.alpha_composite(base, txt)
 	mpimg.imsave(image_file, np.array(out))
 
@@ -1413,7 +1490,6 @@ def concate_images(basename, num, clean=False, numpixels = 400):
 		for i in range(num):
 			os.remove("%s_%d.png" % (basename, i))
 
-
 # mask image and draw the outline
 def draw_outline(img_png, mask_png, outline_color = [1,0,0,1]):
 	from scipy.ndimage.morphology import binary_erosion
@@ -1430,7 +1506,6 @@ def draw_outline(img_png, mask_png, outline_color = [1,0,0,1]):
 	img[index] = outline_color
 	os.remove(mask_png)
 	mpimg.imsave(img_png, img)
-
 
 # various methods for choosing thresholds automatically
 def perform_autothreshold(data, threshold_type = 'yen', z = 2.3264):
@@ -1468,119 +1543,6 @@ def perform_autothreshold(data, threshold_type = 'yen', z = 2.3264):
 		if uthres > data.max(): # for the rare case when uthres is larger than the max value
 			uthres = data.max()
 		return(lthres, uthres)
-
-
-# makes a webpage of slices
-def make_slice_html(outname, coordinates, iv, write_coordinates = True):
-	if not os.path.exists(".%s" % outname):
-		os.mkdir(".%s" % outname)
-	os.system("mv ?_Slices.png .%s/" % outname)
-	os.system("mv ?_colorbar.png .%s/" % outname)
-	with open(outname, "wb") as o:
-		o.write("<!DOCTYPE HTML>\n")
-		o.write("<html lang = 'en'>\n")
-		o.write("<head>\n")
-		o.write("  <title>TMI Snapshots</title>\n")
-		o.write("  <meta charset = 'UTF-8' />\n")
-		o.write("  <style>\n")
-		o.write("      p {\n")
-		o.write("        font-size: 1vw;\n")
-		o.write("        padding: 5px;\n")
-		o.write("      }\n")
-		o.write("      ul {\n")
-		o.write("        white-space: nowrap;\n")
-		o.write("      }\n")
-		o.write("      ul, li {\n")
-		o.write("        list-style: none;\n")
-		o.write("        display: inline;\n")
-		o.write("      }\n")
-		o.write("  </style>\n")
-		o.write("</head>\n")
-		o.write("<body>\n")
-		o.write("  <h1>X Axis </h1>\n")
-		if write_coordinates:
-			o.write("    <p><span> X = %s </span>" % ', X = '.join([ '%.0f' % elem for elem in coordinates[:,0] ]))
-			o.write("    </p>")
-		o.write("    <a href='.%s/X_Slices.png'>\n" % outname)
-		o.write("    <img src = '.%s/X_Slices.png' width='100%%'>\n" % outname)
-		o.write("    </a>\n")
-		o.write("  <h1> Y Axis </h1>\n")
-		if write_coordinates:
-			o.write("    <p><centre> Y = %s</centre>" % ', Y = '.join([ '%.0f' % elem for elem in coordinates[:,1] ]))
-			o.write("    </p>")
-		o.write("    <a href='.%s/Y_Slices.png'>\n" % outname)
-		o.write("    <img src = '.%s/Y_Slices.png' width='100%%'>\n" % outname)
-		o.write("    </a>\n")
-		o.write("  <h1>Z Axis </h1>\n")
-		if write_coordinates:
-			o.write("    <p>Z = %s " % ', Z = '.join([ '%.0f' % elem for elem in coordinates[:,2] ]))
-			o.write("    </p>")
-		o.write("    <a href='.%s/Z_Slices.png'>\n" % outname)
-		o.write("    <img src = '.%s/Z_Slices.png' width='100%%'>\n" % outname)
-		o.write("    </a>\n")
-		o.write("    <h1> Color Bar(s) </h1>\n")
-		o.write("    <ul>\n")
-		for i in range(len(iv)):
-			o.write("        <a href='.%s/%d_colorbar.png'>\n" % (outname, i))
-			o.write("        <li><img src='.%s/%d_colorbar.png' width='auto' height='200'></li>\n" % (outname, i))
-			o.write("        </a>\n")
-		o.write("    </ul>\n")
-		o.write("    <a href='.%s/settings'>\n" % outname)
-		o.write("    <p>tm_slices settings</p>\n")
-		o.write("    </a>\n")
-		o.write("    <p>Made with TFCE_mediation and tmi_viewer</p>\n")
-		o.write("</body>\n")
-		o.write("</html>\n")
-		o.close()
-
-
-# write tmi_viewer html
-def make_html(title, basename, lut, outname): # outdated
-	with open(outname, "wb") as o:
-		o.write("<!DOCTYPE HTML>\n")
-		o.write("<html lang = 'en'>\n")
-		o.write("<head>\n")
-		o.write("  <title>TMI Snapshots</title>\n")
-		o.write("  <meta charset = 'UTF-8' />\n")
-		o.write("</head>\n")
-		o.write("<body>\n")
-		o.write("  <h1>%s</h1>\n" % title)
-		o.write("   <ul>\n")
-		o.write("    <a href='%s_anterior.png'>\n" % basename)
-		o.write("    <img src = '%s_anterior.png' height='200' width='200'>\n" % basename)
-		o.write("    <h1 style='position:absolute; top:40px; left:80px;' > Anterior</h1>\n")
-		o.write("    </a>\n")
-		o.write("    <a href='%s_posterior.png'>\n" % basename)
-		o.write("    <img src = '%s_posterior.png' height='200' width='200'>\n" % basename)
-		o.write("    <h1 style='position:absolute; top:40px; left:280px;'> Posterior</h1>\n")
-		o.write("    </a>\n")
-		o.write("    <a href='%s_left.png'>\n" % basename)
-		o.write("    <img src = '%s_left.png' height='200' width='200'>\n" % basename)
-		o.write("    <h1 style='position:absolute; top:40px; left:500px;'> Left</h1>\n")
-		o.write("    </a>\n")
-		o.write("    <a href='%s_right.png'>\n" % basename)
-		o.write("    <img src = '%s_right.png' height='200' width='200'>\n" % basename)
-		o.write("    <h1 style='position:absolute; top:40px; left:700px;'> Right</h1>\n")
-		o.write("    </a>\n")
-		o.write("    <a href='%s_superior.png'>\n" % basename)
-		o.write("    <img src = '%s_superior.png' height='200' width='200'>\n" % basename)
-		o.write("    <h1 style='position:absolute; top:40px; left:900px;'> Superior</h1>\n")
-		o.write("    </a>\n")
-		o.write("    <a href='%s_inferior.png'>\n" % basename)
-		o.write("    <img src = '%s_inferior.png' height='200' width='200'>\n" % basename)
-		o.write("    <h1 style='position:absolute; top:40px; left:1110px;'> Inferior</h1>\n")
-		o.write("    </a>\n")
-		o.write("    <a href='%s_isometric.png'>\n" % basename)
-		o.write("    <img src = '%s_isometric.png' height='200' width='200'>\n" % basename)
-		o.write("    <h1 style='position:absolute; top:40px; left:1300px;'> Isometric</h1>\n")
-		o.write("    </a>\n")
-		o.write("    <a href='%s_colorbar.png'>\n" % lut)
-		o.write("    <img src = '%s_colorbar.png' height='200' width='40'>\n" % lut)
-		o.write("    </a>\n")
-		o.write("   </ul>\n")
-		o.write("</body>\n")
-		o.write("</html>\n")
-		o.close()
 
 # saves the output dictionary of argparse to a file
 def write_dict(filename, outnamespace):
