@@ -1,2 +1,2 @@
-# pyggseg
-rpy2 python port of ggseg and ggseg3d
+# PyCerebralPlots
+Versatile Multimodal Plotting for MRI Surface and Volume Visualization 
