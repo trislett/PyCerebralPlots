@@ -59,11 +59,61 @@ def print_available_neuroimaging_resources():
 	for surf in template_files:
 		print("\t%s" % surf)
 
-#def get_neuroimaging_resources(resource_type = None, annotation_name = None, hemisphere = None, template_name = None):
-#	if resource_type == None:
-#		print_available_neuroimaging_resources()
-#	elif resource_type == "Surface":
-#		assert hemisphere is not None, "Error: for surfaces and annotations, hemisphere cannot be None."
+def get_neuroimaging_resources(surface_name=None, annotation_name=None, hemisphere=None, template_name=None):
+	"""
+	Retrieves the file location of neuroimaging resources based on the provided options.
+
+	Parameters
+	----------
+		surface_name : str:
+			Name of the surface file.
+		annotation_name : str
+			Name of the annotation file.
+		hemisphere : str
+			Hemisphere ('lh' for left or 'rh' for right).
+		template_name : str
+			Name of the template file.
+	Returns
+	-------
+		file_loc : str 
+			File location of the requested neuroimaging resource.
+	Raises
+	-------
+		ValueError: If more than one option is provided.
+		ValueError: If the hemisphere is None or not 'lh' or 'rh'.
+		FileNotFoundError: If the file location does not exist.
+
+	"""
+	valid_options = ["surface_name", "annotation_name", "template_name"]
+	options = [surface_name, annotation_name, template_name]
+	counts = sum(option is not None for option in options)
+
+	if counts == 0:
+		print_available_neuroimaging_resources()
+		return
+	if counts > 1:
+		raise ValueError(f"Error: include only one of: {', '.join(valid_options)}.")
+	if surface_name is not None:
+		if hemisphere is None:
+			raise ValueError("Error: for surfaces and annotations, the hemisphere cannot be None.")
+		if hemisphere not in ['lh', 'rh']:
+			raise ValueError("Error: hemisphere must be 'lh' or 'rh'.")
+		file_loc = f"{scriptwd}/PyCerebralPlots/static/{hemisphere}.{surface_name}.srf"
+	elif annotation_name is not None:
+		if hemisphere is None:
+			raise ValueError("Error: for surfaces and annotations, the hemisphere cannot be None.")
+		if hemisphere not in ['lh', 'rh']:
+			raise ValueError("Error: hemisphere must be 'lh' or 'rh'.")
+		file_loc = f"{scriptwd}/PyCerebralPlots/static/{hemisphere}.{annotation_name}.annot"
+	else:
+		file_loc = f"{scriptwd}/PyCerebralPlots/static/{template_name}.nii.gz"
+	if os.path.exists(file_loc):
+		return(file_loc)
+	else:
+		raise FileNotFoundError(f"Error: file {file_loc} not found. Select the name from the available resources:")
+		print_available_neuroimaging_resources()
+
+
 def check_byteorder(arr):
 	"""
 	This function checks and ensures that the byte order (endianess) of the NumPy array matches the system's byte order.

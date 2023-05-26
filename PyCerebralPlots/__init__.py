@@ -1,2 +1,2 @@
-from . import tv_func
+from . import functions
 from .version import __version__

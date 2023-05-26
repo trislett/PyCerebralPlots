@@ -5,7 +5,7 @@ from distutils.command.sdist import sdist
 from setuptools import setup, find_packages
 
 PACKAGE_NAME = "PyCerebralPlots"
-BUILD_REQUIRES = ["numpy", "scipy", "argparse", "matplotlib", "pandas", "nibabel", "skimage", "mayavi"]
+BUILD_REQUIRES = ["numpy", "scipy", "argparse", "matplotlib", "pandas", "nibabel", "scikit-image", "mayavi"]
 
 CLASSIFIERS = ["Development Status :: 3 - Alpha",
   "Environment :: Console",
