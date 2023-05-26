@@ -36,6 +36,34 @@ from skimage import filters, measure
 from mayavi import mlab
 from warnings import warn
 
+# get static files
+scriptwd = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+files_directory = os.path.join(scriptwd, "PyCerebralPlots", "static")
+files = os.listdir(files_directory)
+
+annotation_files = [f for f in files if f.endswith(".annot")]
+annotation_files = np.unique([f[3:-6] for f in annotation_files])
+surfaces_files = [f for f in files if f.endswith(".srf")]
+surfaces_files = np.unique([f[3:-4] for f in surfaces_files])
+template_files = [f for f in files if f.endswith(".nii.gz")]
+template_files = np.unique([f[:-7] for f in template_files])
+
+def print_available_neuroimaging_resources():
+	print("Available FreeSurfer Surfaces {lh,rh}:")
+	for surf in surfaces_files:
+		print("\t%s" % surf)
+	print("Available FreeSurfer Annotations {lh,rh}:")
+	for surf in annotation_files:
+		print("\t%s" % surf)
+	print("Available Nifti Templates:")
+	for surf in template_files:
+		print("\t%s" % surf)
+
+#def get_neuroimaging_resources(resource_type = None, annotation_name = None, hemisphere = None, template_name = None):
+#	if resource_type == None:
+#		print_available_neuroimaging_resources()
+#	elif resource_type == "Surface":
+#		assert hemisphere is not None, "Error: for surfaces and annotations, hemisphere cannot be None."
 def check_byteorder(arr):
 	"""
 	This function checks and ensures that the byte order (endianess) of the NumPy array matches the system's byte order.
