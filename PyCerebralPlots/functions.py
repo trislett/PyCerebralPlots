@@ -1589,11 +1589,11 @@ def get_cmap_array(lut, background_alpha = 255, image_alpha = 1.0, zero_lower = 
 		cmap_array = np.column_stack((erf_cm([255,0,0],[0,255,0], [0,0,255]), (255 * np.ones(256) * image_alpha)))
 	elif str(lut) == 'tm-white':
 		cmap_array = np.column_stack((linear_cm([255,255,255],[255,255,255]), (255 * np.ones(256) * image_alpha)))
-	elif m == 'rywlbb-gradient':
+	elif str(lut) == 'rywlbb-gradient':
 		cmap_array = create_rywlbb_gradient_cmap()
-	elif m == 'ryw-gradient':
+	elif str(lut) == 'ryw-gradient':
 		cmap_array = create_ryw_gradient_cmap()
-	elif m == 'lbb-gradient':
+	elif str(lut) == 'lbb-gradient':
 		cmap_array = create_lbb_gradient_cmap()
 	else:
 		try:
