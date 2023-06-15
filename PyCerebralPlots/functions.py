@@ -36,7 +36,7 @@ from skimage import filters, measure
 from mayavi import mlab
 from warnings import warn
 
-# get static files
+# get static resources
 scriptwd = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 files_directory = os.path.join(scriptwd, "PyCerebralPlots", "static")
 files = os.listdir(files_directory)
@@ -48,6 +48,11 @@ surfaces_files = np.unique([f[3:-4] for f in surfaces_files])
 template_files = [f for f in files if f.endswith(".nii.gz")]
 template_files = np.unique([f[:-7] for f in template_files])
 
+pack_directory = os.path.join(scriptwd, "PyCerebralPlots", "static", "aseg-subcortical-Surf")
+aseg_subcortical_files = np.sort(os.listdir(pack_directory))
+pack_directory = os.path.join(scriptwd, "PyCerebralPlots", "static", "JHU-ICBM-Surf")
+jhu_white_matter_files = np.sort(os.listdir(pack_directory))
+
 def print_available_neuroimaging_resources():
 	print("Available FreeSurfer Surfaces {lh,rh}:")
 	for surf in surfaces_files:
@@ -58,6 +63,25 @@ def print_available_neuroimaging_resources():
 	print("Available Nifti Templates:")
 	for surf in template_files:
 		print("\t%s" % surf)
+
+def print_available_surface_packs():
+	print("Available Freesurfer aseg subcortical pack ['aseg']:")
+	for surf in aseg_subcortical_files:
+		print("\t%s" % os.path.basename(surf)[:-4])
+	print("Available JHU (Mori) white matter tracts ['mori']:")
+	for surf in jhu_white_matter_files:
+		print("\t%s" % os.path.basename(surf)[:-4])
+
+def get_surface_pack(pack = None):
+	if pack is None:
+		print("Available packs: {aseg, mori}")
+		print_available_surface_packs()
+	elif pack == 'aseg':
+		return([os.path.join(scriptwd, "PyCerebralPlots", "static", "aseg-subcortical-Surf", surf) for surf in aseg_subcortical_files])
+	elif pack == 'mori':
+		return([os.path.join(scriptwd, "PyCerebralPlots", "static", "JHU-ICBM-Surf", surf) for surf in jhu_white_matter_files])
+	else:
+		print("%s not in {aseg, mori}")
 
 def get_neuroimaging_resources(surface_name=None, annotation_name=None, hemisphere=None, template_name=None):
 	"""
@@ -113,39 +137,46 @@ def get_neuroimaging_resources(surface_name=None, annotation_name=None, hemisphe
 		raise FileNotFoundError(f"Error: file {file_loc} not found. Select the name from the available resources:")
 		print_available_neuroimaging_resources()
 
+# Color maps
 
-def check_byteorder(arr):
-	"""
-	This function checks and ensures that the byte order (endianess) of the NumPy array matches the system's byte order.
-	If the byte order does not match or is undefined, it performs the necessary byte swapping and changes the byte order of the array accordingly.
-
-	Parameters
-	----------
-	arr : array-like
-		The input neuroimage array whose byte order needs to be checked and adjusted if necessary.
-
-	Returns
-	-------
-	np.ndarray
-		The modified NumPy array with the correct byte order, either the same as the system's byte order or swapped if needed.
-	"""
-	arr = np.array(arr)
-	if sys.byteorder == 'little':
-		sys_bo = '<'
-	elif sys.byteorder == 'big':
-		sys_bo = '>'
+# linear function look-up tables
+def linear_cm(c0,c1,c2 = None):
+	c_map = np.zeros((256,3))
+	if c2 is not None:
+		for i in range(3):
+			c_map[0:128,i] = np.linspace(c0[i],c1[i],128)
+			c_map[127:256,i] = np.linspace(c1[i],c2[i],129)
 	else:
-		pass
-	if not (arr.dtype.byteorder == sys_bo) or (arr.dtype.byteorder == '='):
-		arr = arr.byteswap().newbyteorder()
-	return(arr)
+		for i in range(3):
+			c_map[:,i] = np.linspace(c0[i],c1[i],256)
+	return(c_map)
 
-def _plot_colormap(cmap):
-	data = np.arange(100).reshape((10, 10))  # Example data for the plot
-	fig, ax = plt.subplots()
-	im = ax.imshow(data, cmap=cmap)
-	fig.colorbar(im)
-	plt.show()
+
+# log function look-up tables
+def log_cm(c0,c1,c2 = None):
+	c_map = np.zeros((256,3))
+	if c2 is not None:
+		for i in range(3):
+			c_map[0:128,i] = np.geomspace(c0[i] + 1,c1[i] + 1,128)-1
+			c_map[127:256,i] = np.geomspace(c1[i] + 1,c2[i] + 1,129)-1
+	else:
+		for i in range(3):
+			c_map[:,i] = np.geomspace(c0[i] + 1,c1[i] + 1,256)-1
+	return(c_map)
+
+
+# error function look-up tables
+def erf_cm(c0,c1,c2 = None):
+	c_map = np.zeros((256,3))
+	if c2 is not None:
+		for i in range(3):
+			c_map[0:128,i] = erf(np.linspace(3*(c0[i]/255),3*(c1[i]/255),128)) * 255
+			c_map[127:256,i] = erf(np.linspace(3*(c1[i]/255),3*(c2[i]/255),129)) * 255
+	else:
+		for i in range(3):
+			#c_map[:,i] = erf(np.linspace(0,3,256)) * np.linspace(c0[i], c1[i], 256)
+			c_map[:,i] = erf(np.linspace(3*(c0[i]/255),3*(c1[i]/255),256)) * 255 
+	return(c_map)
 
 def create_rywlbb_gradient_cmap(linear_alpha = False, return_array = True):
 	colors = ["#00008C", "#2234A8", "#4467C4", "#659BDF", "#87CEFB", "white", "#ffec19", "#ffc100", "#ff9800", "#ff5607", "#f6412d"]
@@ -198,6 +229,454 @@ def create_lbb_gradient_cmap(linear_alpha = False, return_array = True):
 			cmap._lut[:256, -1] = np.linspace(0, 1, 256)
 		return(cmap)
 
+
+# display the luts included in matplotlib and the customs luts from tmi_viewer
+def display_matplotlib_luts():
+	# Adapted from https://matplotlib.org/1.2.1/examples/pylab_examples/show_colormaps.html
+
+	# This example comes from the Cookbook on www.scipy.org. According to the
+	# history, Andrew Straw did the conversion from an old page, but it is
+	# unclear who the original author is.
+
+#	plt.switch_backend('Qt4Agg')
+	warnings.filterwarnings("ignore",category=matplotlib.cbook.mplDeprecation)
+
+	a = np.linspace(0, 1, 256).reshape(1,-1)
+	a = np.vstack((a,a))
+
+	maps = sorted(m for m in plt.cm.datad if not m.endswith("_r"))
+	maps.append('red-yellow') # custom maps 
+	maps.append('blue-lightblue')
+	maps.append('green-lightgreen')
+	maps.append('tm-breeze')
+	maps.append('tm-sunset')
+	maps.append('tm-broccoli')
+	maps.append('tm-octopus')
+	maps.append('tm-storm')
+	maps.append('tm-flow')
+	maps.append('tm-logBluGry')
+	maps.append('tm-logRedYel')
+	maps.append('tm-erfRGB')
+	maps.append('rywlbb-gradient')
+	maps.append('ryw-gradient')
+	maps.append('lbb-gradient')
+	
+	nmaps = len(maps) + 1
+
+	fig = plt.figure(figsize=(8,12))
+	fig.subplots_adjust(top=0.99, bottom=0.01, left=0.2, right=0.99)
+	for i,m in enumerate(maps):
+		ax = plt.subplot(nmaps, 1, i+1)
+		plt.axis("off")
+		if m == 'red-yellow':
+			cmap_array = linear_cm([255,0,0],[255,255,0]) / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'blue-lightblue':
+			cmap_array = linear_cm([0,0,255],[0,255,255]) / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'green-lightgreen':
+			cmap_array = linear_cm([0,128,0],[0,255,0]) / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'tm-breeze':
+			cmap_array = linear_cm([199,233,180],[65,182,196],[37,52,148]) / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'tm-sunset':
+			cmap_array = linear_cm([255,255,51],[255,128,0],[204,0,0]) / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'tm-storm':
+			cmap_array = linear_cm([0,153,0],[255,255,0],[204,0,0]) / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'tm-flow':
+			cmap_array = log_cm([51,51,255],[255,0,0],[255,255,255]) / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'tm-logBluGry':
+			cmap_array = log_cm([0,0,51],[0,0,255],[255,255,255]) / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'tm-logRedYel':
+			cmap_array = log_cm([102,0,0],[200,0,0],[255,255,0]) / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'tm-erfRGB':
+			cmap_array = erf_cm([255,0,0],[0,255,0], [0,0,255]) / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'tm-broccoli':
+			cmap_array = linear_cm([204,255,153],[76,153,0], [0,102,0]) / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'tm-octopus':
+			cmap_array = linear_cm([255,204,204],[255,0,255],[102,0,0]) / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'rywlbb-gradient':
+			cmap_array = create_rywlbb_gradient_cmap() / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'ryw-gradient':
+			cmap_array = create_ryw_gradient_cmap() / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		elif m == 'lbb-gradient':
+			cmap_array = create_lbb_gradient_cmap() / 255
+			plt.imshow(a, aspect='auto', cmap=ListedColormap(cmap_array,m), origin='lower')
+		else:
+			plt.imshow(a, aspect='auto', cmap=plt.get_cmap(m), origin='lower')
+		pos = list(ax.get_position().bounds)
+		fig.text(pos[0] - 0.01, pos[1], m, fontsize=10, horizontalalignment='right')
+	plt.show()
+
+
+# Get RGBA colormap [uint8, uint8, uint8, uint8]
+def get_cmap_array(lut, background_alpha = 255, image_alpha = 1.0, zero_lower = True, zero_upper = False, base_color = [227,218,201,0], c_reverse = False):
+	"""
+	Generate an RGBA colormap array based on the specified lookup table (lut) and parameters.
+	Use display_matplotlib_luts() to see the available luts.
+
+	Parameters
+	----------
+	lut : str
+		Lookup table name or abbreviation. Accepted values include:
+		- 'r-y' or 'red-yellow'
+		- 'b-lb' or 'blue-lightblue'
+		- 'g-lg' or 'green-lightgreen'
+		- 'tm-breeze'
+		- 'tm-sunset'
+		- 'tm-broccoli'
+		- 'tm-octopus'
+		- 'tm-storm'
+		- 'tm-flow'
+		- 'tm-logBluGry'
+		- 'tm-logRedYel'
+		- 'tm-erfRGB'
+		- 'tm-white'
+		- 'rywlbb'
+		- 'ryw'
+		- 'lbb'
+		- Any matplotlib colorscheme from https://matplotlib.org/examples/color/colormaps_reference.html
+	background_alpha : int, optional
+		Alpha value for the background color. Default is 255.
+	image_alpha : float, optional
+		Alpha value for the colormap colors. Default is 1.0.
+	zero_lower : bool, optional
+		Whether to set the lower boundary color to the base_color. Default is True.
+	zero_upper : bool, optional
+		Whether to set the upper boundary color to the base_color. Default is False.
+	base_color : list of int, optional
+		RGBA values for the base color. Default is [227, 218, 201, 0].
+	c_reverse : bool, optional
+		Whether to reverse the colormap array. Default is False.
+
+	Returns
+	-------
+	cmap_array : ndarray
+	    Custom RGBA colormap array of shape (256, 4) with values in the range of [0, 255].
+	"""
+	base_color[3] = background_alpha
+	if lut.endswith('_r'):
+		c_reverse = lut.endswith('_r')
+		lut = lut[:-2]
+	# make custom look-up table
+	if (str(lut) == 'r-y') or (str(lut) == 'red-yellow'):
+		cmap_array = np.column_stack((linear_cm([255,0,0],[255,255,0]), (255 * np.ones(256) * image_alpha)))
+	elif (str(lut) == 'b-lb') or (str(lut) == 'blue-lightblue'):
+		cmap_array = np.column_stack((linear_cm([0,0,255],[0,255,255]), (255 * np.ones(256) * image_alpha)))
+	elif (str(lut) == 'g-lg') or (str(lut) == 'green-lightgreen'):
+		cmap_array = np.column_stack((linear_cm([0,128,0],[0,255,0]), (255 * np.ones(256) * image_alpha)))
+	elif str(lut) == 'tm-breeze':
+		cmap_array = np.column_stack((linear_cm([199,233,180],[65,182,196],[37,52,148]), (255 * np.ones(256) * image_alpha)))
+	elif str(lut) == 'tm-sunset':
+		cmap_array = np.column_stack((linear_cm([255,255,51],[255,128,0],[204,0,0]), (255 * np.ones(256) * image_alpha)))
+	elif str(lut) == 'tm-broccoli':
+		cmap_array = np.column_stack((linear_cm([204,255,153],[76,153,0],[0,102,0]), (255 * np.ones(256) * image_alpha)))
+	elif str(lut) == 'tm-octopus':
+		cmap_array = np.column_stack((linear_cm([255,204,204],[255,0,255],[102,0,0]), (255 * np.ones(256) * image_alpha)))
+	elif str(lut) == 'tm-storm':
+		cmap_array = np.column_stack((linear_cm([0,153,0],[255,255,0],[204,0,0]), (255 * np.ones(256) * image_alpha)))
+	elif str(lut) == 'tm-flow':
+		cmap_array = np.column_stack((log_cm([51,51,255],[255,0,0],[255,255,255]), (255 * np.ones(256) * image_alpha)))
+	elif str(lut) == 'tm-logBluGry':
+		cmap_array = np.column_stack((log_cm([0,0,51],[0,0,255],[255,255,255]), (255 * np.ones(256) * image_alpha)))
+	elif str(lut) == 'tm-logRedYel':
+		cmap_array = np.column_stack((log_cm([102,0,0],[200,0,0],[255,255,0]),(255 * np.ones(256) * image_alpha)))
+	elif str(lut) == 'tm-erfRGB':
+		cmap_array = np.column_stack((erf_cm([255,0,0],[0,255,0], [0,0,255]), (255 * np.ones(256) * image_alpha)))
+	elif str(lut) == 'tm-white':
+		cmap_array = np.column_stack((linear_cm([255,255,255],[255,255,255]), (255 * np.ones(256) * image_alpha)))
+	elif str(lut) == 'rywlbb-gradient':
+		cmap_array = create_rywlbb_gradient_cmap()
+	elif str(lut) == 'ryw-gradient':
+		cmap_array = create_ryw_gradient_cmap()
+	elif str(lut) == 'lbb-gradient':
+		cmap_array = create_lbb_gradient_cmap()
+	else:
+		try:
+			cmap_array = eval('plt.cm.%s(np.arange(256))' % lut)
+			cmap_array[:,3] = cmap_array[:,3] = image_alpha
+		except:
+			print("Error: Lookup table '%s' is not recognized." % lut)
+			print("The lookup table can be red-yellow (r_y), blue-lightblue (b_lb) or any matplotlib colorschemes (https://matplotlib.org/examples/color/colormaps_reference.html)")
+			sys.exit()
+		cmap_array *= 255
+	if c_reverse:
+		cmap_array = cmap_array[::-1]
+	if zero_lower:
+		cmap_array[0] = base_color
+	if zero_upper:
+		cmap_array[-1] = base_color
+	return(cmap_array)
+
+# visualization functions
+
+
+def visualize_surface_pack(surf_pack, alpha = 1.0, atlas_values = None, cmap_array = get_cmap_array('gist_rainbow', zero_lower=False), alpha_array = None, vmin = None, vmax = None, uniform_lighting = True, niter_surface_smooth = 20, save_figure = None, save_figure_orientation = 'x', output_format = 'png', color_bar_label = None, flat_surface = False, filter_legend_strings = None):
+	cmap = ListedColormap((cmap_array/255.0))
+	if atlas_values is None:
+		atlas_values = np.linspace(0,1,len(surf_pack))
+	if alpha_array is None:
+		alpha_array = np.ones((len(surf_pack))) * alpha
+	else:
+		assert len(alpha_array) == len(surf_pack), "Error: the lengths of alpha_array and surf_pack must be the same."
+	for s, surface_path in enumerate(surf_pack):
+		v, f = convert_fs(surface_path)
+		if niter_surface_smooth is not None:
+			v, f = vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = niter_surface_smooth, mode='taubin')
+		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
+			color = cmap(atlas_values[s])[:3],
+			opacity = alpha_array[s])
+	surf.actor.mapper.interpolate_scalars_before_mapping = 0
+	surf.actor.property.backface_culling = True
+	surf.scene.parallel_projection = True
+	surf.scene.background = (0,0,0)
+
+	if flat_surface:
+		surf.scene.z_plus_view()
+	else:
+		surf.scene.x_minus_view()
+	if uniform_lighting:
+		surf.actor.property.lighting = False
+	if save_figure is not None:
+		if flat_surface:
+			surf.scene.z_plus_view()
+			savename = '%s_flat.%s'  % (save_figure, output_format)
+			mlab.savefig(savename, magnification=4)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		else:
+			if 'x' in save_figure_orientation:
+				savename = '%s_left.%s'  % (save_figure, output_format)
+				mlab.savefig(savename, magnification=4)
+				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+				surf.scene.x_plus_view()
+				savename = '%s_right.%s'  % (save_figure, output_format)
+				mlab.savefig(savename, magnification=4)
+				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+			if 'y' in save_figure_orientation:
+				surf.scene.y_minus_view()
+				savename = '%s_posterior.%s'  % (save_figure, output_format)
+				mlab.savefig(savename, magnification=4)
+				correct_image(savename, rotate = 270, crop_black=True, b_transparent=output_transparent_background)
+				surf.scene.y_plus_view()
+				savename = '%s_anterior.%s'  % (save_figure, output_format)
+				mlab.savefig(savename, magnification=4)
+				correct_image(savename, rotate = 90, crop_black=True, b_transparent=output_transparent_background)
+			if 'z' in save_figure_orientation:
+				surf.scene.z_minus_view()
+				savename = '%s_inferior.%s'  % (save_figure, output_format)
+				mlab.savefig(savename, magnification=4)
+				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+				surf.scene.z_plus_view()
+				savename = '%s_superior.%s'  % (save_figure, output_format)
+				mlab.savefig(savename, magnification=4)
+				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+			if 'iso' in save_figure_orientation:
+				surf.scene.isometric_view()
+				savename = '%s_isometric.%s'  % (save_figure, output_format)
+				mlab.savefig(savename, magnification=4)
+				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		if atlas_values is not None:
+			write_colorbar(output_basename = save_figure,
+								cmap_array = cmap_array,
+								vmax = vmax,
+								vmin = vmin,
+								colorbar_label = None,
+								output_format = 'png',
+								abs_colorbar = False,
+								n_ticks = 11,
+								orientation='vertical')
+		else:
+			names = np.array(names)[np.unique(labels)]
+			names = [name.decode('utf-8') for name in names]
+			if filter_legend_strings is not None:
+				if isinstance(filter_legend_strings, str):
+					filter_legend_strings = [filter_legend_strings]
+				for filter_string in filter_legend_strings:
+					names = [name.replace(filter_string, "") for name in names]
+			create_annot_legend(labels = names, rgb_values = ctab[roi_indices][:,:3], output_basename = save_figure)
+		mlab.clf()
+		mlab.options.offscreen = False
+
+def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path, atlas_values = None, cmap_array = None, add_wireframe = True, uniform_lighting = True, vmin = None, vmax = None, autothreshold_scalar = False, autothreshold_alg= 'yen_abs', absmin = None, absminmax = False, opacity = 1.0, niter_surface_smooth = 0, save_figure = None, save_figure_orientation = 'x', output_format = 'png', output_transparent_background = True, color_bar_label = None, flat_surface = False, filter_legend_strings = None):
+	if save_figure is not None:
+		mlab.options.offscreen = True
+	labels, ctab, names = nib.freesurfer.read_annot(freesurfer_annotation_path)
+	roi_indices = np.unique(labels)[1:]
+	v, f = convert_fs(surface_path)
+	if niter_surface_smooth > 0:
+		v, f = vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = niter_surface_smooth)
+	if atlas_values is None:
+		roi_indices = np.unique(labels)
+		colors = ctab[roi_indices][:,:3]
+		cindices = np.arange(0,len(colors),1)
+		scalar_data = np.zeros((len(labels)))
+		for r, roi in enumerate(roi_indices):
+			scalar_data[labels==roi] = cindices[r]
+		# create a new cmap array
+		cmap_array = np.ones((256,4), dtype=int) * 255
+		cmap_array[:colors.shape[0],:3] = colors
+		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
+			scalars = scalar_data, 
+			vmin = 0,
+			vmax = 255,
+			opacity = opacity)
+		surf.module_manager.scalar_lut_manager.lut.table = cmap_array
+		surf.actor.mapper.interpolate_scalars_before_mapping = 0
+	else:
+		assert cmap_array is not None, "Error: a cmap_array must be provided for plotting atlas_values"
+		scalar_data = np.zeros((len(labels)))
+		for r, roi in enumerate(roi_indices):
+			scalar_data[labels==roi] = atlas_values[r]
+		if autothreshold_scalar:
+			vmin, vmax = perform_autothreshold(scalar_data, threshold_type = autothreshold_alg)
+		if absmin is not None:
+			scalar_data[np.abs(scalar_data) < absmin] = 0
+		if vmin is None:
+			vmin = np.nanmin(scalar_data)
+		if vmax is None:
+			vmax = np.nanmax(scalar_data)
+		if absminmax:
+			vmax = np.max([np.abs(vmin), np.abs(vmax)])
+			vmin = -np.max([np.abs(vmin), np.abs(vmax)])
+		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
+			scalars = scalar_data, 
+			vmin = vmin,
+			vmax = vmax,
+			opacity = opacity)
+	if add_wireframe:
+		plot_freesurfer_annotation_wireframe(v, f, freesurfer_annotation_path)
+	surf.module_manager.scalar_lut_manager.lut.table = cmap_array
+	surf.actor.mapper.interpolate_scalars_before_mapping = 0
+	surf.actor.property.backface_culling = True
+	surf.scene.parallel_projection = True
+	surf.scene.background = (0,0,0)
+	if flat_surface:
+		surf.scene.z_plus_view()
+	else:
+		surf.scene.x_minus_view()
+	if uniform_lighting:
+		surf.actor.property.lighting = False
+	if save_figure is not None:
+		if flat_surface:
+			surf.scene.z_plus_view()
+			savename = '%s_flat.%s'  % (save_figure, output_format)
+			mlab.savefig(savename, magnification=4)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		else:
+			if 'x' in save_figure_orientation:
+				savename = '%s_left.%s'  % (save_figure, output_format)
+				mlab.savefig(savename, magnification=4)
+				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+				surf.scene.x_plus_view()
+				savename = '%s_right.%s'  % (save_figure, output_format)
+				mlab.savefig(savename, magnification=4)
+				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+			if 'y' in save_figure_orientation:
+				surf.scene.y_minus_view()
+				savename = '%s_posterior.%s'  % (save_figure, output_format)
+				mlab.savefig(savename, magnification=4)
+				correct_image(savename, rotate = 270, crop_black=True, b_transparent=output_transparent_background)
+				surf.scene.y_plus_view()
+				savename = '%s_anterior.%s'  % (save_figure, output_format)
+				mlab.savefig(savename, magnification=4)
+				correct_image(savename, rotate = 90, crop_black=True, b_transparent=output_transparent_background)
+			if 'z' in save_figure_orientation:
+				surf.scene.z_minus_view()
+				savename = '%s_inferior.%s'  % (save_figure, output_format)
+				mlab.savefig(savename, magnification=4)
+				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+				surf.scene.z_plus_view()
+				savename = '%s_superior.%s'  % (save_figure, output_format)
+				mlab.savefig(savename, magnification=4)
+				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+			if 'iso' in save_figure_orientation:
+				surf.scene.isometric_view()
+				savename = '%s_isometric.%s'  % (save_figure, output_format)
+				mlab.savefig(savename, magnification=4)
+				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		if atlas_values is not None:
+			write_colorbar(output_basename = save_figure,
+								cmap_array = cmap_array,
+								vmax = vmax,
+								vmin = vmin,
+								colorbar_label = None,
+								output_format = 'png',
+								abs_colorbar = False,
+								n_ticks = 11,
+								orientation='vertical')
+		else:
+			names = np.array(names)[np.unique(labels)]
+			names = [name.decode('utf-8') for name in names]
+			if filter_legend_strings is not None:
+				if isinstance(filter_legend_strings, str):
+					filter_legend_strings = [filter_legend_strings]
+				for filter_string in filter_legend_strings:
+					names = [name.replace(filter_string, "") for name in names]
+			create_annot_legend(labels = names, rgb_values = ctab[roi_indices][:,:3], output_basename = save_figure)
+		mlab.clf()
+		mlab.options.offscreen = False
+
+
+
+# helper functions
+def check_byteorder(arr):
+	"""
+	This function checks and ensures that the byte order (endianess) of the NumPy array matches the system's byte order.
+	If the byte order does not match or is undefined, it performs the necessary byte swapping and changes the byte order of the array accordingly.
+
+	Parameters
+	----------
+	arr : array-like
+		The input neuroimage array whose byte order needs to be checked and adjusted if necessary.
+
+	Returns
+	-------
+	np.ndarray
+		The modified NumPy array with the correct byte order, either the same as the system's byte order or swapped if needed.
+	"""
+	arr = np.array(arr)
+	if sys.byteorder == 'little':
+		sys_bo = '<'
+	elif sys.byteorder == 'big':
+		sys_bo = '>'
+	else:
+		pass
+	if not (arr.dtype.byteorder == sys_bo) or (arr.dtype.byteorder == '='):
+		arr = arr.byteswap().newbyteorder()
+	return(arr)
+
+def label_to_surface(labels, values, masked = None, null_value = -1, make_3d = False):
+	outvalue = np.array(values)
+	if masked is not None:
+		outvalue[masked] = null_value
+	outdata = np.zeros_like(labels, dtype=float)
+	for i, value in enumerate(outvalue):
+		label_num = i+1
+		index_arr = labels == label_num
+		outdata[index_arr] = value
+	if make_3d:
+		outdata = outdata[:, np.newaxis, np.newaxis]
+	return outdata.astype(np.float32, order = "C")
+
+def _plot_colormap(cmap):
+	data = np.arange(100).reshape((10, 10))  # Example data for the plot
+	fig, ax = plt.subplots()
+	im = ax.imshow(data, cmap=cmap)
+	fig.colorbar(im)
+	plt.show()
+
+
 def offscreen_render():
 	mlab.options.offscreen = True
 
@@ -249,8 +728,6 @@ def convert_voxel(img_data, affine = None, threshold = None, data_mask = None, a
 		print("No voxels above threshold")
 		v = f = values = None
 	return(v, f, values)
-
-
 
 def create_surface_adjacency(vertices, faces):
 	adjacency = [set([]) for i in range(vertices.shape[0])]
@@ -384,6 +861,7 @@ def vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = 5, scalar
 	else:
 		return (v, f)
 
+
 def plot_freesurfer_annotation_wireframe(v, f, freesurfer_annotation_path):
 	labels, _, _ = nib.freesurfer.read_annot(freesurfer_annotation_path)
 	a = [len(set(labels[f[k]])) != 1 for k in range(len(f))]
@@ -402,8 +880,11 @@ def plot_freesurfer_annotation_wireframe(v, f, freesurfer_annotation_path):
 	surf.module_manager.scalar_lut_manager.lut.table = sc_cmap_array
 	surf.actor.actor.force_opaque = True
 
-# Remove black from png
+
 def crop_image_alpha(img_name):
+	"""
+	Crops png image based on alpha = 0.
+	"""
 	img = imageio.imread(img_name)
 	ind0 = img[:,:,3].mean(1) != 0
 	ind1 = img[:,:,3].mean(0) != 0
@@ -431,122 +912,6 @@ def create_annot_legend(labels, rgb_values, output_basename, num_columns = None,
 	plt.close()
 
 
-def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path, atlas_values = None, cmap_array = None, add_wireframe = True, uniform_lighting = True, vmin = None, vmax = None, autothreshold_scalar = False, autothreshold_alg= 'yen_abs', absmin = None, absminmax = False, niter_surface_smooth = 0, save_figure = None, save_figure_orientation = 'x', output_format = 'png', output_transparent_background = True, color_bar_label = None, flat_surface = False, filter_legend_strings = None):
-	if save_figure is not None:
-		mlab.options.offscreen = True
-	labels, ctab, names = nib.freesurfer.read_annot(freesurfer_annotation_path)
-	roi_indices = np.unique(labels)[1:]
-	v, f = convert_fs(surface_path)
-	if niter_surface_smooth > 0:
-		v, f = vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = niter_surface_smooth)
-	if atlas_values is None:
-		roi_indices = np.unique(labels)
-		colors = ctab[roi_indices][:,:3]
-		cindices = np.arange(0,len(colors),1)
-		scalar_data = np.zeros((len(labels)))
-		for r, roi in enumerate(roi_indices):
-			scalar_data[labels==roi] = cindices[r]
-		# create a new cmap array
-		cmap_array = np.ones((256,4), dtype=int) * 255
-		cmap_array[:colors.shape[0],:3] = colors
-		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
-			scalars = scalar_data, 
-			vmin = 0,
-			vmax = 255)
-		surf.module_manager.scalar_lut_manager.lut.table = cmap_array
-		surf.actor.mapper.interpolate_scalars_before_mapping = 0
-	else:
-		assert cmap_array is not None, "Error: a cmap_array must be provided for plotting atlas_values"
-		scalar_data = np.zeros((len(labels)))
-		for r, roi in enumerate(roi_indices):
-			scalar_data[labels==roi] = atlas_values[r]
-		if autothreshold_scalar:
-			vmin, vmax = perform_autothreshold(scalar_data, threshold_type = autothreshold_alg)
-		if absmin is not None:
-			scalar_data[np.abs(scalar_data) < absmin] = 0
-		if vmin is None:
-			vmin = np.nanmin(scalar_data)
-		if vmax is None:
-			vmax = np.nanmax(scalar_data)
-		if absminmax:
-			vmax = np.max([np.abs(vmin), np.abs(vmax)])
-			vmin = -np.max([np.abs(vmin), np.abs(vmax)])
-		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
-			scalars = scalar_data, 
-			vmin = vmin,
-			vmax = vmax)
-	if add_wireframe:
-		plot_freesurfer_annotation_wireframe(v, f, freesurfer_annotation_path)
-	surf.module_manager.scalar_lut_manager.lut.table = cmap_array
-	surf.actor.mapper.interpolate_scalars_before_mapping = 0
-	surf.actor.property.backface_culling = True
-	surf.scene.parallel_projection = True
-	surf.scene.background = (0,0,0)
-	if flat_surface:
-		surf.scene.z_plus_view()
-	else:
-		surf.scene.x_minus_view()
-	if uniform_lighting:
-		surf.actor.property.lighting = False
-	if save_figure is not None:
-		if flat_surface:
-			surf.scene.z_plus_view()
-			savename = '%s_flat.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		else:
-			if 'x' in save_figure_orientation:
-				savename = '%s_left.%s'  % (save_figure, output_format)
-				mlab.savefig(savename, magnification=4)
-				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-				surf.scene.x_plus_view()
-				savename = '%s_right.%s'  % (save_figure, output_format)
-				mlab.savefig(savename, magnification=4)
-				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-			if 'y' in save_figure_orientation:
-				surf.scene.y_minus_view()
-				savename = '%s_posterior.%s'  % (save_figure, output_format)
-				mlab.savefig(savename, magnification=4)
-				correct_image(savename, rotate = 270, crop_black=True, b_transparent=output_transparent_background)
-				surf.scene.y_plus_view()
-				savename = '%s_anterior.%s'  % (save_figure, output_format)
-				mlab.savefig(savename, magnification=4)
-				correct_image(savename, rotate = 90, crop_black=True, b_transparent=output_transparent_background)
-			if 'z' in save_figure_orientation:
-				surf.scene.z_minus_view()
-				savename = '%s_inferior.%s'  % (save_figure, output_format)
-				mlab.savefig(savename, magnification=4)
-				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-				surf.scene.z_plus_view()
-				savename = '%s_superior.%s'  % (save_figure, output_format)
-				mlab.savefig(savename, magnification=4)
-				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-			if 'iso' in save_figure_orientation:
-				surf.scene.isometric_view()
-				savename = '%s_isometric.%s'  % (save_figure, output_format)
-				mlab.savefig(savename, magnification=4)
-				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		if atlas_values is not None:
-			write_colorbar(output_basename = save_figure,
-								cmap_array = cmap_array,
-								vmax = vmax,
-								vmin = vmin,
-								colorbar_label = None,
-								output_format = 'png',
-								abs_colorbar = False,
-								n_ticks = 11,
-								orientation='vertical')
-		else:
-			names = np.array(names)[np.unique(labels)]
-			names = [name.decode('utf-8') for name in names]
-			if filter_legend_strings is not None:
-				if isinstance(filter_legend_strings, str):
-					filter_legend_strings = [filter_legend_strings]
-				for filter_string in filter_legend_strings:
-					names = [name.replace(filter_string, "") for name in names]
-			create_annot_legend(labels = names, rgb_values = ctab[roi_indices][:,:3], output_basename = save_figure)
-		mlab.clf()
-		mlab.options.offscreen = False
 
 def plot_freesurfer_annotation_wireframe2(v, f, freesurfer_annotation_path):
 	labels, _, _ = nib.freesurfer.read_annot(freesurfer_annotation_path)
@@ -1450,9 +1815,9 @@ def display_matplotlib_luts():
 	maps.append('tm-logBluGry')
 	maps.append('tm-logRedYel')
 	maps.append('tm-erfRGB')
-	maps.append('rywlbb')
-	maps.append('ryw')
-	maps.append('lbb')
+	maps.append('rywlbb-gradient')
+	maps.append('ryw-gradient')
+	maps.append('lbb-gradient')
 	
 	nmaps = len(maps) + 1
 
@@ -1610,7 +1975,7 @@ def get_cmap_array(lut, background_alpha = 255, image_alpha = 1.0, zero_lower = 
 		cmap_array[0] = base_color
 	if zero_upper:
 		cmap_array[-1] = base_color
-	return cmap_array
+	return(cmap_array)
 
 
 # Remove black from png
