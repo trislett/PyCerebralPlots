@@ -65,7 +65,7 @@ setup(name = PACKAGE_NAME, version = __version__, include_package_data=True,
   install_requires=BUILD_REQUIRES,
   packages=['PyCerebralPlots'],
   package_dir={'PyCerebralPlots': ''},
-  package_data={'PyCerebralPlots': ['static/*', 'static/aseg-subcortical-Surf/*', 'static/JHU-ICBM-Surf/*']},
+  package_data={'PyCerebralPlots': ['static/*', 'static/aseg-subcortical-Surf/*', 'static/JHU-ICBM-Surf/*', 'static/aseg-other-Surf/']},
   configuration=configuration
 )
 
