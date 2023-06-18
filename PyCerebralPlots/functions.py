@@ -1072,6 +1072,7 @@ def visualize_volume_to_surface(nifti_image_path, cmap_array = None, nifti_image
 	surf.scene.x_minus_view()
 	if save_figure is not None:
 		if 'x' in save_figure_orientation:
+			surf.scene.x_minus_view()
 			savename = '%s_left.%s'  % (save_figure, output_format)
 			mlab.savefig(savename, magnification=4)
 			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
