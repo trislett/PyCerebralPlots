@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "PyCerebralPlots"
+dynamic = ["version"]
+description = "PyCerebralPlots"
+readme = "README.md"
+license = {text = "GPL-3.0-or-later"}
+authors = [
+    {name = "Tristram Lett", email = "tris.lett@gmail.com"}
+]
+maintainers = [
+    {name = "Tristram Lett", email = "tris.lett@gmail.com"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console", 
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Topic :: Scientific/Engineering :: Medical Science Apps."
+]
+dependencies = [
+    "numpy",
+    "scipy", 
+    "matplotlib",
+    "pandas",
+    "nibabel",
+    "scikit-image",
+    "pyvista"
+]
+requires-python = ">=3.8"
+
+[project.urls]
+Homepage = "https://github.com/trislett/PyCerebralPlots"
+Repository = "https://github.com/trislett/PyCerebralPlots.git"
+
+[project.scripts]
+testPyCerebralPlot = "PyCerebralPlots:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "PyCerebralPlots.version.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["PyCerebralPlots*"]
+
+[tool.setuptools.package-data]
+PyCerebralPlots = [
+    "static/*",
+    "static/aseg-subcortical-Surf/*", 
+    "static/JHU-ICBM-Surf/*",
+    "static/aseg-other-Surf/*"
+]

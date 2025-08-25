@@ -1,20 +1,20 @@
 #!/usr/bin/env python
 
-#    Various functions for PyCerebralPlots
-#    Copyright (C) 2023  Tristram Lett
+#	Various functions for PyCerebralPlots
+#	Copyright (C) 2023  Tristram Lett
 
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
+#	This program is free software: you can redistribute it and/or modify
+#	it under the terms of the GNU General Public License as published by
+#	the Free Software Foundation, either version 3 of the License, or
+#	(at your option) any later version.
 
-#    This program is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU General Public License for more details.
+#	This program is distributed in the hope that it will be useful,
+#	but WITHOUT ANY WARRANTY; without even the implied warranty of
+#	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#	GNU General Public License for more details.
 
-#    You should have received a copy of the GNU General Public License
-#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#	You should have received a copy of the GNU General Public License
+#	along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
 import os
@@ -33,7 +33,7 @@ from matplotlib.colorbar import ColorbarBase
 from scipy import ndimage
 from scipy.special import erf
 from skimage import filters, measure
-from mayavi import mlab
+import pyvista as pv
 from warnings import warn
 
 # get static resources
@@ -363,7 +363,7 @@ def get_cmap_array(lut, background_alpha = 255, image_alpha = 1.0, zero_lower = 
 	Returns
 	-------
 	cmap_array : ndarray
-	    Custom RGBA colormap array of shape (256, 4) with values in the range of [0, 255].
+		Custom RGBA colormap array of shape (256, 4) with values in the range of [0, 255].
 	"""
 	base_color[3] = background_alpha
 	if lut.endswith('_r'):
@@ -420,15 +420,70 @@ def get_cmap_array(lut, background_alpha = 255, image_alpha = 1.0, zero_lower = 
 	return(cmap_array)
 
 
-
-# visualization functions
-def visualize_surface_pack(surf_pack, alpha = 1.0, atlas_values = None, vmin = None, vmax = None, cmap_array = None, alpha_array = None, uniform_lighting = True, niter_surface_smooth = None, save_figure = None, save_figure_orientation = 'xz', output_format = 'png', output_transparent_background = True, save_colour_bar = True, off_screen_render = False, use_lapacian = False):
+def visualize_surface_pack(surf_pack, alpha=1.0, atlas_values=None, vmin=None, vmax=None, 
+						  cmap_array=None, alpha_array=None, uniform_lighting=True, 
+						  niter_surface_smooth=None, save_figure=None, 
+						  save_figure_orientation='xz', output_format='png', 
+						  output_transparent_background=True, save_colour_bar=True, 
+						  off_screen_render=False, use_lapacian=False):
+	"""
+	Visualize a collection of brain surfaces with customizable rendering options.
+	
+	Parameters
+	----------
+	surf_pack : list of str
+		List of file paths to surface files (e.g., FreeSurfer format).
+	alpha : float, default=1.0
+		Global opacity value for all surfaces (0.0 to 1.0).
+	atlas_values : array-like, optional
+		Values to color-code each surface. If None, uses linear spacing from 0 to 1.
+	vmin, vmax : float, optional
+		Minimum and maximum values for color scaling. If None, uses data range.
+	cmap_array : array-like, optional
+		Custom colormap array (N x 4 RGBA values). If None, uses solid white.
+	alpha_array : array-like, optional
+		Per-surface opacity values. Must match length of surf_pack.
+	uniform_lighting : bool, default=True
+		If True, disables lighting for uniform appearance.
+	niter_surface_smooth : int, optional
+		Number of smoothing iterations to apply to surfaces.
+	save_figure : str, optional
+		Base filename for saving images. If None, displays interactively.
+	save_figure_orientation : str, default='xz'
+		Orientations to save ('x', 'y', 'z', 'iso' combinations).
+	output_format : str, default='png'
+		Output image format ('png', 'jpg', etc.).
+	output_transparent_background : bool, default=True
+		Whether to use transparent background in saved images.
+	save_colour_bar : bool, default=True
+		Whether to save a separate colorbar image.
+	off_screen_render : bool, default=False
+		Whether to render off-screen (headless).
+	use_lapacian : bool, default=False
+		Whether to use Laplacian smoothing (vs Taubin smoothing).
+		
+	Returns
+	-------
+	pyvista.Plotter or None
+		Returns plotter object if save_figure is None, otherwise None.
+		
+	Examples
+	--------
+	>>> surf_files = get_surface_pack('aseg')
+	>>> plotter = visualize_surface_pack(surf_files[:5], alpha=0.8)
+	>>> 
+	>>> # Save multiple orientations
+	>>> visualize_surface_pack(surf_files, save_figure='brain_surfaces',
+	...					   save_figure_orientation='xyz')
+	"""
 	smooth_mode = 'taubin'
 	if use_lapacian:
 		smooth_mode = 'laplacian'
-	# cmap_array = get_cmap_array('gist_rainbow', zero_lower=False) 
-	if (save_figure is not None) or (off_screen_render):
-		mlab.options.offscreen = True
+		
+	# Create plotter
+	plotter = pv.Plotter(off_screen=off_screen_render or (save_figure is not None))
+	
+	# Handle atlas values for coloring
 	if atlas_values is None:
 		atlas_values = np.linspace(0, 1, len(surf_pack))
 	else:
@@ -439,596 +494,727 @@ def visualize_surface_pack(surf_pack, alpha = 1.0, atlas_values = None, vmin = N
 		if (atlas_values.max() > 1.) or (atlas_values.min() < -1.0):
 			print("Warning: normalizing the data to min (%1.3f) and max values (%1.3f). It is probably better to set vmin, vmax." % (vmin, vmax))
 		atlas_values = (atlas_values - vmin) / (vmax - vmin)
+	
+	# Set up colormap
 	if cmap_array is None:
-		cmap_array = np.ones((256,4),int) * 255
-	cmap = ListedColormap((cmap_array/255.0))
+		cmap_array = np.ones((256, 4), int) * 255
+	cmap = ListedColormap((cmap_array / 255.0))
+	
+	# Handle alpha array
 	if alpha_array is None:
 		alpha_array = np.ones((len(surf_pack))) * alpha
 	else:
 		assert len(alpha_array) == len(surf_pack), "Error: the lengths of alpha_array and surf_pack must be the same."
+	
+	assert np.mean(alpha_array) != 0., "Error: the alpha_array contains only zero values"
+	
+	# Add surfaces to plotter
 	for s, surface_path in enumerate(surf_pack):
-		assert np.mean(alpha_array) != 0., "Error: the alpha_array contains only zero values"
 		if alpha_array[s] != 0:
 			v, f = convert_fs(surface_path)
 			if niter_surface_smooth is not None:
-				v, f = vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = niter_surface_smooth, mode = smooth_mode)
-			surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
-				color = cmap(atlas_values[s])[:3],
-				opacity = alpha_array[s])
-	surf.actor.mapper.interpolate_scalars_before_mapping = 0
-	surf.actor.property.backface_culling = True
-	surf.scene.parallel_projection = True
-	surf.scene.background = (0,0,0)
-	surf.scene.x_minus_view()
-	if uniform_lighting:
-		surf.actor.property.lighting = False
-	if save_figure is not None:
-		if 'x' in save_figure_orientation:
-			surf.scene.x_minus_view()
-			savename = '%s_left.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-			surf.scene.x_plus_view()
-			savename = '%s_right.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		if 'y' in save_figure_orientation:
-			surf.scene.y_minus_view()
-			savename = '%s_posterior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, rotate = 270, crop_black=True, b_transparent=output_transparent_background)
-			surf.scene.y_plus_view()
-			savename = '%s_anterior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, rotate = 90, crop_black=True, b_transparent=output_transparent_background)
-		if 'z' in save_figure_orientation:
-			surf.scene.z_minus_view()
-			savename = '%s_inferior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-			surf.scene.z_plus_view()
-			savename = '%s_superior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		if 'iso' in save_figure_orientation:
-			surf.scene.isometric_view()
-			savename = '%s_isometric.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		if save_colour_bar:
-			write_colorbar(output_basename = save_figure,
-								cmap_array = cmap_array,
-								vmin = vmin,
-								vmax = vmax,
-								colorbar_label = None,
-								output_format = 'png',
-								abs_colorbar = False,
-								n_ticks = 11,
-								orientation='vertical')
-		mlab.clf()
-		mlab.options.offscreen = False
-	else:
-		mlab.options.offscreen = False
-		return(surf)
+				v, f = vectorized_surface_smooth(v, f, adjacency=None, 
+											   number_of_iter=niter_surface_smooth, 
+											   mode=smooth_mode)
+			
+			# Create PyVista mesh
+			faces = np.column_stack([np.full(f.shape[0], 3), f])
+			mesh = pv.PolyData(v, faces)
+			
+			# Add mesh to plotter
+			plotter.add_mesh(mesh, 
+						   color=cmap(atlas_values[s])[:3],
+						   opacity=alpha_array[s],
+						   lighting=not uniform_lighting,
+						   smooth_shading=True)
 
-def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path, atlas_values = None, cmap_array = None, add_wireframe = True, uniform_lighting = True, vmin = None, vmax = None, autothreshold_scalar = False, autothreshold_alg= 'yen_abs', absmin = None, absminmax = False, alpha = 1.0, niter_surface_smooth = 0, save_figure = None, save_figure_orientation = 'xz', output_format = 'png', output_transparent_background = True, flat_surface = False, filter_legend_strings = None, off_screen_render = False):
-	if (save_figure is not None) or (off_screen_render):
-		mlab.options.offscreen = True
+	plotter.set_background('black')
+	plotter.camera.parallel_projection = True
+	plotter.view_yz()  # Start with left view (equivalent to x_minus_view)
+
+	if save_figure is not None:
+		# Axial views (superior and inferior)
+		plotter.view_xy(negative=False)
+		plotter.reset_camera()
+		savename = f'{save_figure}_axial_superior.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		plotter.view_xy(negative=True, render=False)
+		plotter.reset_camera()
+		savename = f'{save_figure}_axial_inferior.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+
+		# Coronal views (posterior and anterior)
+		plotter.view_xz(negative=False)
+		plotter.reset_camera()
+		savename = f'{save_figure}_coronal_posterior.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		plotter.view_xz(negative=True)
+		plotter.reset_camera()
+		savename = f'{save_figure}_coronal_anterior.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+
+		# Sagittal views (right and left)
+		plotter.view_yz(negative=False)
+		plotter.reset_camera()
+		savename = f'{save_figure}_sagittal_right.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		plotter.view_yz(negative=True)
+		plotter.reset_camera()
+		savename = f'{save_figure}_sagittal_left.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		if save_colour_bar:
+			write_colorbar(output_basename=save_figure,
+						  cmap_array=cmap_array,
+						  vmin=vmin,
+						  vmax=vmax,
+						  colorbar_label=None,
+						  output_format='png',
+						  abs_colorbar=False,
+						  n_ticks=11,
+						  orientation='vertical')
+		
+		plotter.close()
+		return None
+	else:
+		return plotter
+
+def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path, 
+								   atlas_values=None, cmap_array=None, 
+								   add_wireframe=True, uniform_lighting=True, 
+								   vmin=None, vmax=None, autothreshold_scalar=False, 
+								   autothreshold_alg='yen_abs', absmin=None, 
+								   absminmax=False, alpha=1.0, niter_surface_smooth=0, 
+								   save_figure=None, output_format='png', 
+								   output_transparent_background=True, 
+								   flat_surface=False, filter_legend_strings=None, 
+								   off_screen_render=False, use_lapacian=False):
+	"""
+	Visualize a FreeSurfer brain surface with annotation-based coloring.
+	
+	Parameters
+	----------
+	surface_path : str
+		Path to the FreeSurfer surface file.
+	freesurfer_annotation_path : str
+		Path to the FreeSurfer annotation file.
+	atlas_values : array-like, optional
+		Custom values for each ROI. If None, uses annotation colors.
+	cmap_array : array-like, optional
+		Custom colormap array (N x 4 RGBA values). Required if atlas_values provided.
+	add_wireframe : bool, default=True
+		Whether to highlight annotation boundaries in white.
+	uniform_lighting : bool, default=True
+		If True, disables lighting for uniform appearance.
+	vmin, vmax : float, optional
+		Minimum and maximum values for color scaling.
+	autothreshold_scalar : bool, default=False
+		Whether to automatically threshold scalar values.
+	autothreshold_alg : str, default='yen_abs'
+		Algorithm for automatic thresholding.
+	absmin : float, optional
+		Absolute minimum threshold value.
+	absminmax : bool, default=False
+		Whether to use symmetric min/max values.
+	alpha : float, default=1.0
+		Opacity value (0.0 to 1.0).
+	niter_surface_smooth : int, default=0
+		Number of smoothing iterations to apply.
+	save_figure : str, optional
+		Base filename for saving images. If None, displays interactively.
+		Saves all 6 standard orientations (axial, coronal, sagittal views).
+	output_format : str, default='png'
+		Output image format.
+	output_transparent_background : bool, default=True
+		Whether to use transparent background in saved images.
+	flat_surface : bool, default=False
+		Whether to display surface from superior view only.
+	filter_legend_strings : str or list, optional
+		Strings to filter from annotation names in legend.
+	off_screen_render : bool, default=False
+		Whether to render off-screen (headless).
+	use_lapacian : bool, default=False
+		Whether to use Laplacian smoothing (vs Taubin smoothing).
+		
+	Returns
+	-------
+	pyvista.Plotter or None
+		Returns plotter object if save_figure is None, otherwise None.
+		
+	Examples
+	--------
+	>>> surface_file = "path/to/lh.pial"
+	>>> annot_file = "path/to/lh.aparc.annot"
+	>>> plotter = visualize_freesurfer_annotation(surface_file, annot_file)
+	>>> 
+	>>> # Save without wireframe boundaries
+	>>> visualize_freesurfer_annotation(surface_file, annot_file,
+	...							   add_wireframe=False,
+	...							   save_figure='brain_annotation')
+	"""
+	smooth_mode = 'taubin'
+	if use_lapacian:
+		smooth_mode = 'laplacian'
+	
+	# Create plotter
+	plotter = pv.Plotter(off_screen=off_screen_render or (save_figure is not None))
+	
+	# Read FreeSurfer annotation
 	labels, ctab, names = nib.freesurfer.read_annot(freesurfer_annotation_path)
-	roi_indices = np.unique(labels)[1:]
+	roi_indices = np.unique(labels)  # Include background (0) for proper indexing
+	
+	# Load and optionally smooth surface
 	v, f = convert_fs(surface_path)
 	if niter_surface_smooth > 0:
-		v, f = vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = niter_surface_smooth, mode = 'taubin')
+		v, f = vectorized_surface_smooth(v, f, adjacency=None, 
+									   number_of_iter=niter_surface_smooth, 
+									   mode=smooth_mode)
+	
+	# Create PyVista mesh
+	faces = np.column_stack([np.full(f.shape[0], 3), f])
+	mesh = pv.PolyData(v, faces)
+	
+	# Handle coloring based on atlas_values or annotation colors
 	if atlas_values is None:
-		roi_indices = np.unique(labels)
-		colors = ctab[roi_indices][:,:3]
-		cindices = np.arange(0,len(colors),1)
-		scalar_data = np.zeros((len(labels)))
+		# Use annotation colors directly
+		if -1 in roi_indices:
+			roi_indices = roi_indices[1:]
+			labels[labels == -1] = 0
+		colors = ctab[roi_indices][:, :3]  # Get colors for all unique labels
+		
+		# Create per-vertex colors
+		vertex_colors = np.zeros((len(labels), 3))
 		for r, roi in enumerate(roi_indices):
-			scalar_data[labels==roi] = cindices[r]
-		# create a new cmap array
-		cmap_array = np.ones((256,4), dtype=int) * 255
-		cmap_array[:colors.shape[0],:3] = colors
-		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
-			scalars = scalar_data, 
-			vmin = 0,
-			vmax = 255,
-			opacity = alpha)
-		surf.module_manager.scalar_lut_manager.lut.table = cmap_array
-		surf.actor.mapper.interpolate_scalars_before_mapping = 0
+			vertex_colors[labels == roi] = colors[r]
+		
+		# Add wireframe (boundary highlighting) if requested
+		if add_wireframe:
+			# Find faces where vertices have different labels (boundaries)
+			boundary_faces = [len(set(labels[f[k]])) != 1 for k in range(len(f))]
+			boundary_vertices = np.unique(f[boundary_faces])
+			# Set boundary vertices to white
+			vertex_colors[boundary_vertices] = [169, 169, 169]
+		
+		# Add colors to mesh
+		mesh.point_data['colors'] = vertex_colors.astype(np.uint8)
+		
+		# Add mesh with vertex colors
+		plotter.add_mesh(mesh, 
+						scalars='colors',
+						rgb=True,  # Use RGB colors directly
+						opacity=alpha,
+						lighting=not uniform_lighting,
+						smooth_shading=True,
+						show_scalar_bar=False)
+		
+		# Create cmap_array for colorbar/legend creation
+		cmap_array = np.ones((len(colors), 4), dtype=int) * 255
+		cmap_array[:, :3] = colors
+		
 	else:
+		# Use custom atlas values
 		assert cmap_array is not None, "Error: a cmap_array must be provided for plotting atlas_values"
+		
+		roi_indices_nonzero = np.unique(labels)[1:]  # Skip background for atlas values
 		scalar_data = np.zeros((len(labels)))
-		for r, roi in enumerate(roi_indices):
-			scalar_data[labels==roi] = atlas_values[r]
+		for r, roi in enumerate(roi_indices_nonzero):
+			scalar_data[labels == roi] = atlas_values[r]
+		
 		if autothreshold_scalar:
-			vmin, vmax = perform_autothreshold(scalar_data, threshold_type = autothreshold_alg)
+			vmin, vmax = perform_autothreshold(scalar_data, threshold_type=autothreshold_alg)
+		
 		if absmin is not None:
 			scalar_data[np.abs(scalar_data) < absmin] = 0
+			
 		if vmin is None:
 			vmin = np.nanmin(scalar_data)
 		if vmax is None:
 			vmax = np.nanmax(scalar_data)
+			
 		if absminmax:
 			vmax = np.max([np.abs(vmin), np.abs(vmax)])
 			vmin = -np.max([np.abs(vmin), np.abs(vmax)])
-		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
-			scalars = scalar_data, 
-			vmin = vmin,
-			vmax = vmax,
-			opacity = alpha)
-	if add_wireframe:
-		plot_freesurfer_annotation_wireframe(v, f, freesurfer_annotation_path)
-	surf.module_manager.scalar_lut_manager.lut.table = cmap_array
-	surf.actor.mapper.interpolate_scalars_before_mapping = 0
-	surf.actor.property.backface_culling = True
-	surf.scene.parallel_projection = True
-	surf.scene.background = (0,0,0)
+		
+		# Convert scalar values to colors using colormap
+		cmap_func = ListedColormap((cmap_array / 255.0))
+		# Normalize scalar data to [0, 1] range for colormap
+		normalized_data = (scalar_data - vmin) / (vmax - vmin) if vmax != vmin else np.zeros_like(scalar_data)
+		vertex_colors = (cmap_func(normalized_data)[:, :3] * 255).astype(np.uint8)
+		
+		# Add wireframe (boundary highlighting) if requested
+		if add_wireframe:
+			# Find faces where vertices have different labels (boundaries)
+			boundary_faces = [len(set(labels[f[k]])) != 1 for k in range(len(f))]
+			boundary_vertices = np.unique(f[boundary_faces])
+			# Set boundary vertices to white
+			vertex_colors[boundary_vertices] = [169, 169, 169]
+		
+		# Add colors to mesh
+		mesh.point_data['colors'] = vertex_colors
+		
+		# Add mesh with vertex colors
+		plotter.add_mesh(mesh,
+						scalars='colors',
+						rgb=True,  # Use RGB colors directly
+						opacity=alpha,
+						lighting=not uniform_lighting,
+						smooth_shading=True,
+						show_scalar_bar=False)
+	
+	# Set up scene
+	plotter.set_background('black')
+	plotter.camera.parallel_projection = True
+	
 	if flat_surface:
-		surf.scene.z_plus_view()
+		plotter.view_xy()  # Superior view
 	else:
-		surf.scene.x_minus_view()
-	if uniform_lighting:
-		surf.actor.property.lighting = False
+		plotter.view_yz(negative=True)  # Left view
+	
 	if save_figure is not None:
 		if flat_surface:
-			surf.scene.z_plus_view()
-			savename = '%s_flat.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
+			plotter.view_xy()
+			plotter.reset_camera()
+			savename = f'{save_figure}_flat.{output_format}'
+			plotter.screenshot(savename, transparent_background=output_transparent_background)
 			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
 		else:
-			if 'x' in save_figure_orientation:
-				savename = '%s_left.%s'  % (save_figure, output_format)
-				mlab.savefig(savename, magnification=4)
-				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-				surf.scene.x_plus_view()
-				savename = '%s_right.%s'  % (save_figure, output_format)
-				mlab.savefig(savename, magnification=4)
-				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-			if 'y' in save_figure_orientation:
-				surf.scene.y_minus_view()
-				savename = '%s_posterior.%s'  % (save_figure, output_format)
-				mlab.savefig(savename, magnification=4)
-				correct_image(savename, rotate = 270, crop_black=True, b_transparent=output_transparent_background)
-				surf.scene.y_plus_view()
-				savename = '%s_anterior.%s'  % (save_figure, output_format)
-				mlab.savefig(savename, magnification=4)
-				correct_image(savename, rotate = 90, crop_black=True, b_transparent=output_transparent_background)
-			if 'z' in save_figure_orientation:
-				surf.scene.z_minus_view()
-				savename = '%s_inferior.%s'  % (save_figure, output_format)
-				mlab.savefig(savename, magnification=4)
-				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-				surf.scene.z_plus_view()
-				savename = '%s_superior.%s'  % (save_figure, output_format)
-				mlab.savefig(savename, magnification=4)
-				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-			if 'iso' in save_figure_orientation:
-				surf.scene.isometric_view()
-				savename = '%s_isometric.%s'  % (save_figure, output_format)
-				mlab.savefig(savename, magnification=4)
-				correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+			# Axial views (superior and inferior)
+			plotter.view_xy(negative=False)
+			plotter.reset_camera()
+			savename = f'{save_figure}_axial_superior.{output_format}'
+			plotter.screenshot(savename, transparent_background=output_transparent_background)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+			
+			plotter.view_xy(negative=True)
+			plotter.reset_camera()
+			savename = f'{save_figure}_axial_inferior.{output_format}'
+			plotter.screenshot(savename, transparent_background=output_transparent_background)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+
+			# Coronal views (posterior and anterior)
+			plotter.view_xz(negative=False)
+			plotter.reset_camera()
+			savename = f'{save_figure}_coronal_posterior.{output_format}'
+			plotter.screenshot(savename, transparent_background=output_transparent_background)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+			
+			plotter.view_xz(negative=True)
+			plotter.reset_camera()
+			savename = f'{save_figure}_coronal_anterior.{output_format}'
+			plotter.screenshot(savename, transparent_background=output_transparent_background)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+
+			# Sagittal views (right and left)
+			plotter.view_yz(negative=False)
+			plotter.reset_camera()
+			savename = f'{save_figure}_sagittal_right.{output_format}'
+			plotter.screenshot(savename, transparent_background=output_transparent_background)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+			
+			plotter.view_yz(negative=True)
+			plotter.reset_camera()
+			savename = f'{save_figure}_sagittal_left.{output_format}'
+			plotter.screenshot(savename, transparent_background=output_transparent_background)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		
+		# Save colorbar or legend
 		if atlas_values is not None:
-			write_colorbar(output_basename = save_figure,
-								cmap_array = cmap_array,
-								vmax = vmax,
-								vmin = vmin,
-								colorbar_label = None,
-								output_format = 'png',
-								abs_colorbar = False,
-								n_ticks = 11,
-								orientation='vertical')
+			write_colorbar(output_basename=save_figure,
+						  cmap_array=cmap_array,
+						  vmax=vmax,
+						  vmin=vmin,
+						  colorbar_label=None,
+						  output_format='png',
+						  abs_colorbar=False,
+						  n_ticks=11,
+						  orientation='vertical')
 		else:
-			names = np.array(names)[np.unique(labels)]
+			names = np.array(names)[roi_indices]  # Use roi_indices instead of np.unique(labels)
 			names = [name.decode('utf-8') for name in names]
 			if filter_legend_strings is not None:
 				if isinstance(filter_legend_strings, str):
 					filter_legend_strings = [filter_legend_strings]
 				for filter_string in filter_legend_strings:
 					names = [name.replace(filter_string, "") for name in names]
-			create_annot_legend(labels = names, rgb_values = ctab[roi_indices][:,:3], output_basename = save_figure)
-		mlab.clf()
-		mlab.options.offscreen = False
+			create_annot_legend(labels=names, 
+							  rgb_values=ctab[roi_indices][:, :3], 
+							  output_basename=save_figure)
+		
+		plotter.close()
+		return None
 	else:
-		mlab.options.offscreen = False
-		return(surf)
+		return plotter
 
-
-def visualize_surface_with_scalar_data(surface, mgh_image = None, cmap_array = None, vmin = None, vmax = None, autothreshold_scalar = False, autothreshold_alg= 'yen_abs', absmin = None, absminmax = False, alpha = 1.0, render_surface_as_wireframe = False,  save_figure = None, save_figure_orientation = 'xz', output_format = 'png', output_transparent_background = True, color_bar_label = None, niter_surface_smooth = 0, render_annotation_wireframe_path = None, uniform_lighting = False, off_screen_render = False,):
+def visualize_surface_with_scalar_data(surface, mgh_image=None, cmap_array=None, 
+									 vmin=None, vmax=None, autothreshold_scalar=False, 
+									 autothreshold_alg='yen_abs', absmin=None, 
+									 absminmax=False, alpha=1.0, 
+									 render_surface_as_wireframe=False,
+									 save_figure=None, output_format='png', 
+									 output_transparent_background=True, 
+									 color_bar_label=None, niter_surface_smooth=0, 
+									 render_annotation_wireframe_path=None, 
+									 uniform_lighting=False, off_screen_render=False,
+									 use_lapacian=False, flat_surface=False):
 	"""
-	Renders a freesurfer surface with optional scalar data using Mayavi. The surface will be interactively rendered if the save_figure is None.
+	Renders a FreeSurfer surface with optional scalar data using PyVista. 
+	The surface will be interactively rendered if save_figure is None.
 
 	Example usage:
-	_ = visualize_surface_with_scalar_data(surface = os.environ['SUBJECTS_DIR'] + '/fsaverage/surf/lh.pial_semi_inflated',
-																	mgh_image = "lh_statistic.mgh"
-																	cmap_array = create_rywlbb_gradient_cmap()
-																	autothreshold_scalar = True,
-																	absminmax = True)
+	_ = visualize_surface_with_scalar_data(
+		surface=os.environ['SUBJECTS_DIR'] + '/fsaverage/surf/lh.pial_semi_inflated',
+		mgh_image="lh_statistic.mgh",
+		cmap_array=create_rywlbb_gradient_cmap(),
+		autothreshold_scalar=True,
+		absminmax=True)
 
 	Parameters
 	----------
-		surface : str
-			The path to the freesurfer surface. e.g., surface = os.environ['SUBJECTS_DIR']+'/fsaverage/surf/lh.pial_semi_inflated'
-		mgh_image : str, optional
-			The path to a MGH image file. Defaults to None.
-		cmap_array : array, optional
-			The colormap array with shape (256,4) and int values ranging from 0 to 255. Defaults to None. e.g., cmap_array = create_rywlbb_gradient_cmap()
-		vmin : float, optional
-			The minimum value of the scalar data. Defaults to None.
-		vmax : float, optional
-			The maximum value of the scalar data. Defaults to None.
-		autothreshold_scalar : bool, optional
-			Whether to perform autothresholding on the scalar data. Defaults to False.
-		autothreshold_alg : str, optional
-			The autothresholding algorithm to use {yen, otso, li}. Defaults to 'yen_abs'.
-			Note: adding _p thresholds only positive values, and _abs sign flips the scalar data so the mean non-zero value is positive. e.g., 'yen_abs'
-		absmin : float, optional
-			The absolute minimum threshold for the scalar data. Defaults to None.
-		absminmax : bool, optional
-			Whether to use the absolute minimum and maximum values for the colormap range.
-			Defaults to False.
-		alpha : float, optional
-			The level of surface transparency. Defaults to 1.0.
-		save_figure : str, optional
-			The basename string for saving the figures. If not None, an image and colorbar will saved using the basename and output_format. Defaults to None.
-		save_figure_orientation : str, optional
-			The orientations to save the figures. Defaults to 'x' (left and right views). Valid options are: {x, y, z, iso}. e.g., save_figure_orientation = 'xyz'
-		output_format : str, optional
-			The output file format for the saved figures. Defaults to 'png'.
-		color_bar_label : str, optional
-			The label for the color bar. Defaults to None.
-		niter_surface_smooth : int, optional
-			The number of iterations for surface smoothing. Defaults to 0. If mgh_image is not None, the scalar values will also be smoothed.
-		render_annotation_wireframe_path : str, optional
-			The path to the Freesurfer annotation. This option will add dark grey outline of the annotation as a wireframe. Defaults to None.
+	surface : str
+		The path to the FreeSurfer surface.
+	mgh_image : str, optional
+		The path to a MGH image file. Defaults to None.
+	cmap_array : array, optional
+		The colormap array with shape (256,4) and int values ranging from 0 to 255.
+	vmin : float, optional
+		The minimum value of the scalar data. Defaults to None.
+	vmax : float, optional
+		The maximum value of the scalar data. Defaults to None.
+	autothreshold_scalar : bool, optional
+		Whether to perform autothresholding on the scalar data. Defaults to False.
+	autothreshold_alg : str, optional
+		The autothresholding algorithm to use {yen, otsu, li}. Defaults to 'yen_abs'.
+	absmin : float, optional
+		The absolute minimum threshold for the scalar data. Defaults to None.
+	absminmax : bool, optional
+		Whether to use the absolute minimum and maximum values for the colormap range.
+	alpha : float, optional
+		The level of surface transparency. Defaults to 1.0.
+	render_surface_as_wireframe : bool, optional
+		Whether to render surface as wireframe. Defaults to False.
+	save_figure : str, optional
+		The basename string for saving figures. If not None, images and colorbar saved.
+	output_format : str, optional
+		The output file format for saved figures. Defaults to 'png'.
+	output_transparent_background : bool, optional
+		Whether to use transparent background in saved images. Defaults to True.
+	color_bar_label : str, optional
+		The label for the color bar. Defaults to None.
+	niter_surface_smooth : int, optional
+		The number of iterations for surface smoothing. Defaults to 0.
+	render_annotation_wireframe_path : str, optional
+		Path to FreeSurfer annotation for wireframe overlay. Defaults to None.
+	uniform_lighting : bool, optional
+		Whether to disable lighting for uniform appearance. Defaults to False.
+	off_screen_render : bool, optional
+		Whether to render off-screen (headless). Defaults to False.
+	use_lapacian : bool, optional
+		Whether to use Laplacian smoothing (vs Taubin). Defaults to False.
+	flat_surface : bool, optional
+		Whether to display surface from superior view only. Defaults to False.
+
 	Returns
 	-------
-		surf : object
-			The mayavi scene instance
+	pyvista.Plotter or None
+		Returns plotter object if save_figure is None, otherwise None.
 	"""
-	if (save_figure is not None) or (off_screen_render):
-		mlab.options.offscreen = True
+	smooth_mode = 'taubin'
+	if use_lapacian:
+		smooth_mode = 'laplacian'
+
+	# Create plotter
+	plotter = pv.Plotter(off_screen=off_screen_render or (save_figure is not None))
+	
 	if cmap_array is None:
-		cmap_array = np.ones((256,4),int) * 255
+		cmap_array = np.ones((256, 4), int) * 255
+
+	# Load and optionally smooth surface
 	v, f = convert_fs(surface)
-	if mgh_image is  None:
+	
+	# Handle annotation wireframe preprocessing if specified
+	boundary_vertices = None
+	if render_annotation_wireframe_path is not None:
+		labels, _, _ = nib.freesurfer.read_annot(render_annotation_wireframe_path)
+		# Find faces where vertices have different labels (boundaries)
+		boundary_faces = [len(set(labels[f[k]])) != 1 for k in range(len(f))]
+		boundary_vertices = np.unique(f[boundary_faces])
+	
+	if mgh_image is None:
+		# No scalar data - just render surface
 		if niter_surface_smooth > 0:
-			v, f, = vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = niter_surface_smooth, scalar = None, mode = 'taubin')
-		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2],
-											f,
-											scalars = None,
-											opacity = alpha)
+			v, f = vectorized_surface_smooth(v, f, adjacency=None, 
+										   number_of_iter=niter_surface_smooth, 
+										   mode=smooth_mode)
+		
+		# Create PyVista mesh
+		faces = np.column_stack([np.full(f.shape[0], 3), f])
+		mesh = pv.PolyData(v, faces)
+		
+		# Handle wireframe annotation for surface without scalar data
+		if boundary_vertices is not None:
+			# Create vertex colors (default gray for surface)
+			vertex_colors = np.full((len(v), 3), 128, dtype=np.uint8)  # Default gray
+			# Set boundary vertices to darker gray
+			vertex_colors[boundary_vertices] = [169, 169, 169]
+			mesh.point_data['colors'] = vertex_colors
+			
+			actor = plotter.add_mesh(mesh,
+									scalars='colors',
+									rgb=True,
+									opacity=alpha,
+									style='wireframe' if render_surface_as_wireframe else 'surface',
+									lighting=not uniform_lighting,
+									smooth_shading=True,
+									show_scalar_bar=False)
+		else:
+			# Add mesh without scalars
+			actor = plotter.add_mesh(mesh,
+									opacity=alpha,
+									style='wireframe' if render_surface_as_wireframe else 'surface',
+									lighting=not uniform_lighting,
+									smooth_shading=True,
+									show_scalar_bar=False)
+		
 	else:
+		# Load scalar data from MGH file
 		img = nib.load(mgh_image)
 		invol = np.asanyarray(img.dataobj)
 		scalar_data = check_byteorder(np.squeeze(invol))
+		
 		if niter_surface_smooth > 0:
-			v, f, scalar_data = vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = niter_surface_smooth, scalar = scalar_data, mode = 'taubin')
+			v, f, scalar_data = vectorized_surface_smooth(v, f, adjacency=None, 
+														number_of_iter=niter_surface_smooth, 
+														scalar=scalar_data, mode=smooth_mode)
+		
 		if autothreshold_scalar:
-			if mgh_image is not None:
-				vmin, vmax = perform_autothreshold(scalar_data, threshold_type = autothreshold_alg)
+			vmin, vmax = perform_autothreshold(scalar_data, threshold_type=autothreshold_alg)
+			
 		if absmin is not None:
 			scalar_data[np.abs(scalar_data) < absmin] = 0
+			
 		if vmin is None:
-			vmin = np.nanmin(invol)
+			vmin = np.nanmin(scalar_data)
 		if vmax is None:
-			vmax = np.nanmax(invol)
+			vmax = np.nanmax(scalar_data)
+			
 		if absminmax:
 			vmax = np.max([np.abs(vmin), np.abs(vmax)])
 			vmin = -np.max([np.abs(vmin), np.abs(vmax)])
-		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
-			scalars = scalar_data, 
-			vmin = vmin,
-			vmax = vmax,
-			opacity = alpha)
-	if render_annotation_wireframe_path is not None:
-		plot_freesurfer_annotation_wireframe(v = v,
-														f = f,
-														freesurfer_annotation_path = render_annotation_wireframe_path)
-	if render_surface_as_wireframe:
-		surf.actor.property.representation = 'wireframe'
-	surf.module_manager.scalar_lut_manager.lut.table = cmap_array
-	surf.actor.mapper.interpolate_scalars_before_mapping = 0
-	surf.actor.property.backface_culling = True
-	surf.scene.parallel_projection = True
-	surf.scene.background = (0,0,0)
-	surf.scene.x_minus_view()
-	if uniform_lighting:
-		surf.actor.property.lighting = False
-	if save_figure is not None:
-		if 'x' in save_figure_orientation:
-			savename = '%s_left.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-			surf.scene.x_plus_view()
-			savename = '%s_right.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		if 'y' in save_figure_orientation:
-			surf.scene.y_minus_view()
-			savename = '%s_posterior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, rotate = 270, crop_black=True, b_transparent=output_transparent_background)
-			surf.scene.y_plus_view()
-			savename = '%s_anterior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, rotate = 90, crop_black=True, b_transparent=output_transparent_background)
-		if 'z' in save_figure_orientation:
-			surf.scene.z_minus_view()
-			savename = '%s_inferior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-			surf.scene.z_plus_view()
-			savename = '%s_superior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		if 'iso' in save_figure_orientation:
-			surf.scene.isometric_view()
-			savename = '%s_isometric.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		write_colorbar(output_basename = save_figure,
-							cmap_array = cmap_array,
-							vmax = vmax,
-							vmin = vmin,
-							colorbar_label = None,
-							output_format = 'png',
-							abs_colorbar = False,
-							n_ticks = 11,
-							orientation='vertical')
-		mlab.clf()
-		mlab.options.offscreen = False
+
+		# Create PyVista mesh
+		faces = np.column_stack([np.full(f.shape[0], 3), f])
+		mesh = pv.PolyData(v, faces)
+		
+		# Convert scalar values to colors using colormap
+		from matplotlib.colors import ListedColormap
+		cmap_func = ListedColormap((cmap_array / 255.0))
+		
+		# Normalize scalar data to [0, 1] range for colormap
+		if vmax != vmin:
+			normalized_data = (scalar_data - vmin) / (vmax - vmin)
+		else:
+			normalized_data = np.zeros_like(scalar_data)
+		
+		# Apply colormap to get vertex colors
+		vertex_colors = (cmap_func(normalized_data)[:, :3] * 255).astype(np.uint8)
+		
+		# Add wireframe annotation boundaries if specified
+		if boundary_vertices is not None:
+			vertex_colors[boundary_vertices] = [169, 169, 169]
+		
+		# Add colors to mesh
+		mesh.point_data['colors'] = vertex_colors
+		
+		# Add mesh with colors
+		actor = plotter.add_mesh(mesh,
+								scalars='colors',
+								rgb=True,
+								opacity=alpha,
+								style='wireframe' if render_surface_as_wireframe else 'surface',
+								lighting=not uniform_lighting,
+								smooth_shading=True,
+								show_scalar_bar=False)
+
+	# Set up scene
+	plotter.set_background('black')
+	plotter.camera.parallel_projection = True
+	
+	if flat_surface:
+		plotter.view_xy()  # Superior view
 	else:
-		mlab.options.offscreen = False
-		return(surf)
+		plotter.view_yz(negative=True)  # Left view
 
-# os.environ['FSLDIR']
-#nifti_image_path = '/mnt/raid1/projects/tris/RESULTS_WRITEUP_SCCA/08MAY2023/EmotionalFaceTask_loading_comp3_tfce_rs.nii.gz'
-#render_mask_volume = '/mnt/raid1/projects/tris/RESULTS_WRITEUP_SCCA/08MAY2023/NEWSURF/MNI152_T1_1mm_brain.nii.gz'
-#visualize_volume_to_surface(nifti_image_path = 'EmotionalFaceTask_loading_comp3_tfce_rs.nii.gz', cmap_array = create_rywlbb_gradient_cmap(), absminmax = True, render_mask_volume = 'NEWSURF/MNI152_T1_1mm_brain.nii.gz', save_figure = 'EmotionalFaceTask_loading_comp3_tfce_rs',save_figure_orientation = 'xz', autothreshold_scalar = True, volume_opacity = 0.8, niter_surface_smooth = 0, niter_surface_smooth_render_mask = 8)
+	if save_figure is not None:
+		if flat_surface:
+			plotter.view_xy()
+			plotter.reset_camera()
+			savename = f'{save_figure}_flat.{output_format}'
+			plotter.screenshot(savename, transparent_background=output_transparent_background)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		else:
+			# Axial views (superior and inferior)
+			plotter.view_xy(negative=False)
+			plotter.reset_camera()
+			savename = f'{save_figure}_axial_superior.{output_format}'
+			plotter.screenshot(savename, transparent_background=output_transparent_background)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+			
+			plotter.view_xy(negative=True)
+			plotter.reset_camera()
+			savename = f'{save_figure}_axial_inferior.{output_format}'
+			plotter.screenshot(savename, transparent_background=output_transparent_background)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
 
-def visualize_volume_iso_surface(nifti_image_path, cmap_array, nifti_image_mask = None,  vmin = None, vmax = None, volume_opacity = 0.8, n_contours = 11, autothreshold_scalar = False, autothreshold_alg = 'yen_abs', absmin = None, absminmax = False, render_mask_volume = None, binarize_render_mask_volume = True, render_mask_volume_opacity = 0.8, save_figure = None, save_figure_orientation = 'xz', output_format = 'png', output_transparent_background = True, color_bar_label = None, niter_surface_smooth = 0, niter_surface_smooth_render_mask = 0, off_screen_render = False):
+			# Coronal views (posterior and anterior)
+			plotter.view_xz(negative=False)
+			plotter.reset_camera()
+			savename = f'{save_figure}_coronal_posterior.{output_format}'
+			plotter.screenshot(savename, transparent_background=output_transparent_background)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+			
+			plotter.view_xz(negative=True)
+			plotter.reset_camera()
+			savename = f'{save_figure}_coronal_anterior.{output_format}'
+			plotter.screenshot(savename, transparent_background=output_transparent_background)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+
+			# Sagittal views (right and left)
+			plotter.view_yz(negative=False)
+			plotter.reset_camera()
+			savename = f'{save_figure}_sagittal_right.{output_format}'
+			plotter.screenshot(savename, transparent_background=output_transparent_background)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+			
+			plotter.view_yz(negative=True)
+			plotter.reset_camera()
+			savename = f'{save_figure}_sagittal_left.{output_format}'
+			plotter.screenshot(savename, transparent_background=output_transparent_background)
+			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+
+		# Save colorbar if we have scalar data
+		if mgh_image is not None:
+			write_colorbar(output_basename=save_figure,
+						  cmap_array=cmap_array,
+						  vmax=vmax,
+						  vmin=vmin,
+						  colorbar_label=color_bar_label,
+						  output_format='png',
+						  abs_colorbar=False,
+						  n_ticks=11,
+						  orientation='vertical')
+
+		plotter.close()
+		return None
+	else:
+		return plotter
+
+def visualize_volume_to_surface(nifti_image_path, cmap_array=None, nifti_image_mask=None, 
+							   volume_alpha=0.8, vmin=None, vmax=None, 
+							   autothreshold_scalar=False, autothreshold_alg='yen_abs', 
+							   absmin=None, absminmax=False, render_mask_volume=None, 
+							   binarize_render_mask_volume=True, render_mask_volume_alpha=0.8, 
+							   save_figure=None, output_format='png', 
+							   output_transparent_background=True, color_bar_label=None, 
+							   niter_surface_smooth=0, smooth_scalar=False, 
+							   niter_surface_smooth_render_mask=0, off_screen_render=False, 
+							   save_colour_bar=True):
 	"""
-	Visualizes a nifti volume as an iso-surface using Mayavi's mlab (vtk) module.
-	If save_figure is None, an interactive Mayavi is displayed.
+	Visualizes a NIfTI volume as a surface. The voxels are converted to a surface using 
+	a marching cube algorithm and surface then undergoes an affine transformation.
+	If save_figure is None, an interactive visualization is displayed.
 	
 	Example usage:
 		nifti_image_path = '/path/to/example_statistic_nifti.nii.gz'
 		render_mask_volume = '/path/to/example_template_brain.nii.gz'
-		visualize_volume_iso_surface(nifti_image_path = nifti_image_path,
-											cmap_array = create_rywlbb_gradient_cmap(),
-											absminmax = True,
-											render_mask_volume = render_mask_volume,
-											save_figure = 'example_figure',
-											save_figure_orientation = 'xz',
-											autothreshold_scalar = True,
-											autothreshold_alg = 'yen_abs',
-											niter_surface_smooth = 0,
-											niter_surface_smooth_render_mask = 8)
-	Parameters
-	----------
-		nifti_image_path : str
-			Path to the NIfTI image file.
-		cmap_array : numpy.ndarray
-			Colormap array for the iso-surface visualization.
-		nifti_image_mask : str, optional
-			Path to the NIfTI mask file. (default: None)
-		vmin : float, optional
-			Minimum value for the scalar data. (default: None)
-		vmax : float, optional
-			Maximum value for the scalar data. (default: None)
-		volume_opacity : float, optional
-			Opacity of the volume visualization. (default: 0.8)
-		n_contours : int, optional
-			Number of contours to display
-		autothreshold_scalar : bool, optional
-			Flag to enable automatic thresholding of the scalar data. (default: False)
-		autothreshold_alg : str, optional
-			Algorithm for automatic thresholding. (default: 'yen_abs')
-		absmin : float, optional
-			Threshold value for absolute minimum of the scalar data. (default: None)
-		absminmax : bool, optional
-			Flag to adjust vmin and vmax based on the absolute minimum and maximum values. (default: False)
-		render_mask_volume : str, optional
-			Path to the NIfTI image file for rendering a separate mask volume. (default: None)
-		binarize_render_mask_volume : bool, optional
-			Flag to binarize the render mask volume. (default: True)
-		render_mask_volume_opacity : float, optional
-			Opacity of the render mask volume visualization. (default: 0.8)
-		save_figure : str, optional
-			Path to save the figure. (default: None)
-		save_figure_orientation : str, optional
-			Orientation of the saved figure (e.g., 'xz', 'xy', 'yz', 'iso'). (default: 'xz')
-		output_format : str, optional
-			Format of the saved figure. (default: 'png')
-		output_transparent_background : bool, optional
-			Flag to make the saved figure's background transparent. (default: True)
-		color_bar_label : str, optional
-			Label for the colorbar. (default: None)
-		niter_surface_smooth : int, optional
-			Number of iterations for smoothing the iso-surface. (default: 0)
-		niter_surface_smooth_render_mask : int, optional
-			Number of iterations for smoothing the render mask volume. (default: 0)
-	Returns
-	-------
-		None
-	"""
-
-	if (save_figure is not None) or (off_screen_render):
-		mlab.options.offscreen = True
-	invol = nib.as_closest_canonical(nib.load(nifti_image_path))
-	data = check_byteorder(np.asanyarray(invol.dataobj))
-	if nifti_image_mask is None:
-		mask_arr = data!=0
-	else:
-		mask = nib.as_closest_canonical(nib.load(nifti_image_mask))
-		mask_arr = check_byteorder(np.asanyarray(mask.dataobj)) != 0
-	scalar_data = data[mask_arr]
-	if autothreshold_scalar:
-		vmin, vmax = perform_autothreshold(scalar_data, threshold_type = autothreshold_alg)
-	if absmin is not None:
-		scalar_data[np.abs(scalar_data) < absmin] = 0
-	if vmin is None:
-		vmin = np.nanmin(scalar_data)
-	if vmax is None:
-		vmax = np.nanmax(scalar_data)
-	if absminmax:
-		vmax = np.max([np.abs(vmin), np.abs(vmax)])
-		vmin = -np.max([np.abs(vmin), np.abs(vmax)])
-	src = apply_affine_to_scalar_field(data, affine = invol.affine)
-	surf = mlab.pipeline.iso_surface(src,
-												vmin=vmin,
-												vmax=vmax,
-												opacity = volume_opacity,
-												contours = n_contours)
-	surf.module_manager.scalar_lut_manager.lut.table = cmap_array
-	surf.actor.mapper.interpolate_scalars_before_mapping = 0
-	if render_mask_volume is not None:
-		render_mask = nib.as_closest_canonical(nib.load(render_mask_volume))
-		mask_data = check_byteorder(np.asanyarray(render_mask.dataobj))
-		if binarize_render_mask_volume:
-			mask_data[mask_data!=0] = 1
-		v, f, scalar_mask_data = convert_voxel(mask_data, affine = render_mask.affine)
-		if niter_surface_smooth_render_mask > 0:
-			v, f = vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = niter_surface_smooth_render_mask, scalar = None, mode = 'taubin')
-		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
-			scalars = scalar_mask_data, 
-			vmin = .99,
-			vmax = 1.01,
-			opacity = render_mask_volume_opacity)
-		white_cmap_arr = np.ones((256, 4)) * 200
-		white_cmap_arr[:,3] = int(render_mask_volume_opacity * 255)
-		surf.module_manager.scalar_lut_manager.lut.table = white_cmap_arr
-	surf.actor.mapper.interpolate_scalars_before_mapping = 0
-	surf.actor.property.backface_culling = True
-	surf.scene.parallel_projection = True
-	surf.scene.background = (0,0,0)
-	surf.scene.x_minus_view()
-	if save_figure is not None:
-		if 'x' in save_figure_orientation:
-			savename = '%s_left.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-			surf.scene.x_plus_view()
-			savename = '%s_right.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		if 'y' in save_figure_orientation:
-			surf.scene.y_minus_view()
-			savename = '%s_posterior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, rotate = 270, crop_black=True, b_transparent=output_transparent_background)
-			surf.scene.y_plus_view()
-			savename = '%s_anterior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, rotate = 90, crop_black=True, b_transparent=output_transparent_background)
-		if 'z' in save_figure_orientation:
-			surf.scene.z_minus_view()
-			savename = '%s_superior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-			surf.scene.z_plus_view()
-			savename = '%s_inferior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		if 'iso' in save_figure_orientation:
-			surf.scene.isometric_view()
-			savename = '%s_isometric.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		write_colorbar(output_basename = save_figure,
-							cmap_array = cmap_array,
-							vmax = vmax,
-							vmin = vmin,
-							colorbar_label = None,
-							output_format = 'png',
-							abs_colorbar = False,
-							n_ticks = 11,
-							orientation='vertical')
-		mlab.clf()
-		mlab.options.offscreen = False
-	else:
-		mlab.options.offscreen = False
-		return(surf)
-
-def visualize_volume_to_surface(nifti_image_path, cmap_array = None, nifti_image_mask = None,  volume_alpha = 0.8, vmin = None, vmax = None, autothreshold_scalar = False, autothreshold_alg= 'yen_abs', absmin = None, absminmax = False, render_mask_volume = None, binarize_render_mask_volume = True, render_mask_volume_alpha = 0.8, save_figure = None, save_figure_orientation = 'xz', output_format = 'png', output_transparent_background = True, color_bar_label = None, niter_surface_smooth = 0, smooth_scalar = False, niter_surface_smooth_render_mask = 0, off_screen_render = False, save_colour_bar = True):
-	"""
-	Visualizes a nifti volume as a surface. The voxels are converted to a surface using a marching cube algorithm and durface then undergoes an affine transformation.
-	If save_figure is None, an interactive Mayavi is displayed.
+		visualize_volume_to_surface(nifti_image_path=nifti_image_path,
+									cmap_array=create_rywlbb_gradient_cmap(),
+									absminmax=True,
+									render_mask_volume=render_mask_volume,
+									save_figure='example_figure',
+									autothreshold_scalar=True,
+									autothreshold_alg='yen_abs',
+									niter_surface_smooth=0,
+									niter_surface_smooth_render_mask=8)
 	
-	Example usage:
-		nifti_image_path = '/path/to/example_statistic_nifti.nii.gz'
-		render_mask_volume = '/path/to/example_template_brain.nii.gz'
-		visualize_volume_to_surface(nifti_image_path = nifti_image_path,
-											cmap_array = create_rywlbb_gradient_cmap(),
-											absminmax = True,
-											render_mask_volume = render_mask_volume,
-											save_figure = 'example_figure',
-											save_figure_orientation = 'xz',
-											autothreshold_scalar = True,
-											autothreshold_alg = 'yen_abs',
-											niter_surface_smooth = 0,
-											niter_surface_smooth_render_mask = 8)
 	Parameters
 	----------
-		nifti_image_path : str
-			Path to the NIfTI image file.
-		cmap_array : numpy.ndarray
-			Colormap array for the surface visualization.
-		nifti_image_mask : str, optional
-			Path to the NIfTI mask file. (default: None)
-		volume_alpha : float, optional
-			Opacity of the volume visualization. (default: 0.8)
-		vmin : float, optional
-			Minimum value for the scalar data. (default: None)
-		vmax : float, optional
-			Maximum value for the scalar data. (default: None)
-		autothreshold_scalar : bool, optional
-			Flag to enable automatic thresholding of the scalar data. (default: False)
-		autothreshold_alg : str, optional
-			Algorithm for automatic thresholding. (default: 'yen_abs')
-		absmin : float, optional
-			Threshold value for absolute minimum of the scalar data. (default: None)
-		absminmax : bool, optional
-			Flag to adjust vmin and vmax based on the absolute minimum and maximum values. (default: False)
-		render_mask_volume : str, optional
-			Path to the NIfTI image file for rendering a separate mask volume. (default: None)
-		binarize_render_mask_volume : bool, optional
-			Flag to binarize the render mask volume. (default: True)
-		render_mask_volume_alpha : float, optional
-			Opacity of the render mask volume visualization. (default: 0.8)
-		save_figure : str, optional
-			Path to save the figure. (default: None)
-		save_figure_orientation : str, optional
-			Orientation of the saved figure (e.g., 'x', 'xz', 'xy', 'yz', 'iso'). (default: 'xz')
-		output_format : str, optional
-			Format of the saved figure. (default: 'png')
-		output_transparent_background : bool, optional
-			Flag to make the saved figure's background transparent. (default: True)
-		color_bar_label : str, optional
-			Label for the colorbar. (default: None)
-		niter_surface_smooth : int, optional
-			Number of iterations for smoothing the surface. (default: 0)
-		niter_surface_smooth_render_mask : int, optional
-			Number of iterations for smoothing the render mask volume. (default: 0)
+	nifti_image_path : str
+		Path to the NIfTI image file.
+	cmap_array : numpy.ndarray, optional
+		Colormap array for the surface visualization.
+	nifti_image_mask : str, optional
+		Path to the NIfTI mask file. (default: None)
+	volume_alpha : float, optional
+		Opacity of the volume visualization. (default: 0.8)
+	vmin : float, optional
+		Minimum value for the scalar data. (default: None)
+	vmax : float, optional
+		Maximum value for the scalar data. (default: None)
+	autothreshold_scalar : bool, optional
+		Flag to enable automatic thresholding of the scalar data. (default: False)
+	autothreshold_alg : str, optional
+		Algorithm for automatic thresholding. (default: 'yen_abs')
+	absmin : float, optional
+		Threshold value for absolute minimum of the scalar data. (default: None)
+	absminmax : bool, optional
+		Flag to adjust vmin and vmax based on the absolute minimum and maximum values. (default: False)
+	render_mask_volume : str, optional
+		Path to the NIfTI image file for rendering a separate mask volume. (default: None)
+	binarize_render_mask_volume : bool, optional
+		Flag to binarize the render mask volume. (default: True)
+	render_mask_volume_alpha : float, optional
+		Opacity of the render mask volume visualization. (default: 0.8)
+	save_figure : str, optional
+		Path to save the figure. (default: None)
+	output_format : str, optional
+		Format of the saved figure. (default: 'png')
+	output_transparent_background : bool, optional
+		Flag to make the saved figure's background transparent. (default: True)
+	color_bar_label : str, optional
+		Label for the colorbar. (default: None)
+	niter_surface_smooth : int, optional
+		Number of iterations for smoothing the surface. (default: 0)
+	smooth_scalar : bool, optional
+		Whether to smooth scalar values along with surface. (default: False)
+	niter_surface_smooth_render_mask : int, optional
+		Number of iterations for smoothing the render mask volume. (default: 0)
+	off_screen_render : bool, optional
+		Whether to render off-screen (headless). (default: False)
+	save_colour_bar : bool, optional
+		Whether to save the colorbar. (default: True)
+
 	Returns
 	-------
-		None
+	pyvista.Plotter or None
+		Returns plotter object if save_figure is None, otherwise None.
 	"""
-	if (save_figure is not None) or (off_screen_render):
-		mlab.options.offscreen = True
+	# Create plotter
+	plotter = pv.Plotter(off_screen=off_screen_render or (save_figure is not None))
+	
 	if cmap_array is None:
-		cmap_array = np.ones((256,4),int) * 255
+		cmap_array = np.ones((256, 4), int) * 255
+
+	# Load NIfTI data
 	invol = nib.as_closest_canonical(nib.load(nifti_image_path))
 	data = check_byteorder(np.asanyarray(invol.dataobj))
+	
+	# Handle masking
 	if nifti_image_mask is None:
-		mask_arr = data!=0
+		mask_arr = data != 0
 	else:
 		mask = nib.as_closest_canonical(nib.load(nifti_image_mask))
 		mask_arr = check_byteorder(np.asanyarray(mask.dataobj)) != 0
+	
 	scalar_data = data[mask_arr]
+	
+	# Handle thresholding and value ranges
 	if autothreshold_scalar:
-		vmin, vmax = perform_autothreshold(scalar_data, threshold_type = autothreshold_alg)
+		vmin, vmax = perform_autothreshold(scalar_data, threshold_type=autothreshold_alg)
 	if absmin is not None:
 		scalar_data[np.abs(scalar_data) < absmin] = 0
 	if vmin is None:
@@ -1038,207 +1224,177 @@ def visualize_volume_to_surface(nifti_image_path, cmap_array = None, nifti_image
 	if absminmax:
 		vmax = np.max([np.abs(vmin), np.abs(vmax)])
 		vmin = -np.max([np.abs(vmin), np.abs(vmax)])
+
+	# Convert scalar values to colors using colormap
+	from matplotlib.colors import ListedColormap
+	cmap_func = ListedColormap((cmap_array / 255.0))
+
+	# Handle positive data
 	if np.max(data) > 0:
-		# positive data
 		data_pos = np.array(data)
-		data_pos[data_pos<0] = 0
-		v, f, scalar_data = convert_voxel(data_pos, affine = invol.affine)
+		data_pos[data_pos < 0] = 0
+		v, f, scalar_data_pos = convert_voxel(data_pos, affine=invol.affine)
+		
 		if niter_surface_smooth > 0:
 			if smooth_scalar:
-				v, f, scalar_data = vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = niter_surface_smooth, scalar = scalar_data, mode = 'taubin')
+				v, f, scalar_data_pos = vectorized_surface_smooth(v, f, adjacency=None, 
+																number_of_iter=niter_surface_smooth, 
+																scalar=scalar_data_pos, mode='taubin')
 			else:
-				v, f = vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = niter_surface_smooth, scalar = None, mode = 'taubin')
-		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
-			scalars = scalar_data, 
-			vmin = vmin,
-			vmax = vmax,
-			opacity = volume_alpha)
+				v, f = vectorized_surface_smooth(v, f, adjacency=None, 
+											   number_of_iter=niter_surface_smooth, 
+											   scalar=None, mode='taubin')
+		
+		# Create PyVista mesh for positive surface
+		faces = np.column_stack([np.full(f.shape[0], 3), f])
+		mesh_pos = pv.PolyData(v, faces)
+		
+		# Normalize scalar data and apply colormap
+		if vmax != vmin:
+			normalized_data = np.clip((scalar_data_pos - vmin) / (vmax - vmin), 0, 1)
+		else:
+			normalized_data = np.zeros_like(scalar_data_pos)
+		
+		vertex_colors = (cmap_func(normalized_data)[:, :3] * 255).astype(np.uint8)
+		mesh_pos.point_data['colors'] = vertex_colors
+		
+		# Add positive surface
+		plotter.add_mesh(mesh_pos,
+						scalars='colors',
+						rgb=True,
+						opacity=volume_alpha,
+						smooth_shading=True,
+						show_scalar_bar=False)
+
+	# Handle negative data
 	if np.min(data) < 0:
 		data_neg = np.array(data)
-		data_neg[data_neg>0] = 0
-		v, f, scalar_data = convert_voxel(data_neg*-1, affine = invol.affine)
+		data_neg[data_neg > 0] = 0
+		v, f, scalar_data_neg = convert_voxel(data_neg * -1, affine=invol.affine)
+		
 		if niter_surface_smooth > 0:
-			v, f, scalar_data = vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = niter_surface_smooth, scalar = scalar_data, mode = 'taubin')
-		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
-			scalars = -scalar_data, 
-			vmin = vmin,
-			vmax = vmax,
-			opacity = volume_alpha)
-	surf.module_manager.scalar_lut_manager.lut.table = cmap_array
-	surf.actor.mapper.interpolate_scalars_before_mapping = 0
-	if render_mask_volume is not None:
-		render_mask = nib.as_closest_canonical(nib.load(render_mask_volume))
-		mask_data = check_byteorder(np.asanyarray(render_mask.dataobj))
-		if binarize_render_mask_volume:
-			mask_data[mask_data!=0] = 1
-		v, f, scalar_mask_data = convert_voxel(mask_data, affine = render_mask.affine)
-		if niter_surface_smooth_render_mask > 0:
-			v, f = vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = niter_surface_smooth_render_mask, scalar = None, mode = 'taubin')
-		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
-			scalars = scalar_mask_data, 
-			vmin = .99,
-			vmax = 1.01,
-			opacity = render_mask_volume_alpha)
-		white_cmap_arr = np.ones((256, 4)) * 200
-		white_cmap_arr[:,3] = int(render_mask_volume_alpha * 255)
-		surf.module_manager.scalar_lut_manager.lut.table = white_cmap_arr
-	surf.actor.mapper.interpolate_scalars_before_mapping = 0
-	surf.actor.property.backface_culling = True
-	surf.scene.parallel_projection = True
-	surf.scene.background = (0,0,0)
-	surf.scene.x_minus_view()
-	if save_figure is not None:
-		if 'x' in save_figure_orientation:
-			surf.scene.x_minus_view()
-			savename = '%s_left.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-			surf.scene.x_plus_view()
-			savename = '%s_right.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		if 'y' in save_figure_orientation:
-			surf.scene.y_minus_view()
-			savename = '%s_posterior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, rotate = 270, crop_black=True, b_transparent=output_transparent_background)
-			surf.scene.y_plus_view()
-			savename = '%s_anterior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, rotate = 90, crop_black=True, b_transparent=output_transparent_background)
-		if 'z' in save_figure_orientation:
-			surf.scene.z_minus_view()
-			savename = '%s_superior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-			surf.scene.z_plus_view()
-			savename = '%s_inferior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		if 'iso' in save_figure_orientation:
-			surf.scene.isometric_view()
-			savename = '%s_isometric.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
-		if save_colour_bar:
-			write_colorbar(output_basename = save_figure,
-								cmap_array = cmap_array,
-								vmin = vmin,
-								vmax = vmax,
-								colorbar_label = None,
-								output_format = 'png',
-								abs_colorbar = False,
-								n_ticks = 11,
-								orientation='vertical')
-		mlab.clf()
-		mlab.options.offscreen = False
-	else:
-		mlab.options.offscreen = False
-		return(surf)
+			if smooth_scalar:
+				v, f, scalar_data_neg = vectorized_surface_smooth(v, f, adjacency=None, 
+																number_of_iter=niter_surface_smooth, 
+																scalar=scalar_data_neg, mode='taubin')
+			else:
+				v, f = vectorized_surface_smooth(v, f, adjacency=None, 
+											   number_of_iter=niter_surface_smooth, 
+											   scalar=None, mode='taubin')
+		
+		# Create PyVista mesh for negative surface
+		faces = np.column_stack([np.full(f.shape[0], 3), f])
+		mesh_neg = pv.PolyData(v, faces)
+		
+		# Negate scalars and normalize
+		neg_scalars = -scalar_data_neg
+		if vmax != vmin:
+			normalized_data = np.clip((neg_scalars - vmin) / (vmax - vmin), 0, 1)
+		else:
+			normalized_data = np.zeros_like(neg_scalars)
+		
+		vertex_colors = (cmap_func(normalized_data)[:, :3] * 255).astype(np.uint8)
+		mesh_neg.point_data['colors'] = vertex_colors
+		
+		# Add negative surface
+		plotter.add_mesh(mesh_neg,
+						scalars='colors',
+						rgb=True,
+						opacity=volume_alpha,
+						smooth_shading=True,
+						show_scalar_bar=False)
 
-def visualize_volume_contour_with_scalar_data(nifti_image_path = None, nifti_image_mask = None, cmap_array = None, volume_alpha = 0.8, n_contours = 20, vmin = None, vmax = None, autothreshold_scalar = False, autothreshold_alg= 'yen_abs', absmin = None, absminmax = False, render_mask_volume = None, render_mask_alpha = 0.2, save_figure = None, save_figure_orientation = 'xz', output_format = 'png', color_bar_label = None, niter_surface_smooth = 10):
-	if save_figure is not None:
-		mlab.options.offscreen = True
-	invol = nib.as_closest_canonical(nib.load(nifti_image_path))
-	data = check_byteorder(np.asanyarray(invol.dataobj))
-	if nifti_image_mask is None:
-		mask_arr = data!=0
-	else:
-		mask = nib.as_closest_canonical(nib.load(nifti_image_mask))
-		mask_arr = check_byteorder(np.asanyarray(mask.dataobj)) != 0
-	scalar_data = data[mask_arr]
-	if autothreshold_scalar:
-		vmin, vmax = perform_autothreshold(scalar_data, threshold_type = autothreshold_alg)
-	if absmin is not None:
-		scalar_data[np.abs(scalar_data) < absmin] = 0
-	if vmin is None:
-		vmin = np.nanmin(scalar_data)
-	if vmax is None:
-		vmax = np.nanmax(scalar_data)
-	if absminmax:
-		vmax = np.max([np.abs(vmin), np.abs(vmax)])
-		vmin = -np.max([np.abs(vmin), np.abs(vmax)])
-	try:
-		surf = apply_affine_to_contour3d(data, invol.affine,
-			lthresh = np.round(vmin, 3) + 0.001,
-			hthresh = np.round(vmax, 3) - 0.001,
-			contours = n_contours,
-			opacity = volume_alpha)
-	except:
-		data[0,0,0] = np.round(vmin, 3) - 0.001
-		data[-1,0,0] = np.round(vmax, 3) + 0.001
-		surf = apply_affine_to_contour3d(data, invol.affine,
-			lthresh = np.round(vmin, 3) + 0.001,
-			hthresh = np.round(vmax, 3) - 0.001,
-			contours = n_contours,
-			opacity = volume_alpha)
-	surf.contour.minimum_contour = vmin
-	surf.module_manager.scalar_lut_manager.lut.table = cmap_array
-	surf.actor.mapper.interpolate_scalars_before_mapping = 1
+	# Render mask volume if provided
 	if render_mask_volume is not None:
 		render_mask = nib.as_closest_canonical(nib.load(render_mask_volume))
 		mask_data = check_byteorder(np.asanyarray(render_mask.dataobj))
-		mask_data[mask_data!=0] = 1
-		v, f, scalar_mask_data = convert_voxel(mask_data, affine = render_mask.affine)
-		if niter_surface_smooth > 0:
-			v, f = vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = niter_surface_smooth, scalar = None, mode = 'taubin')
-		surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
-			scalars = scalar_mask_data, 
-			vmin = .99,
-			vmax = 1.01,
-			opacity = render_mask_alpha)
-		white_cmap_arr = np.ones((256, 4)) * 255
-		white_cmap_arr[:,3] = int(render_mask_alpha * 255)
-		surf.module_manager.scalar_lut_manager.lut.table = white_cmap_arr
-	surf.actor.mapper.interpolate_scalars_before_mapping = 0
-	surf.actor.property.backface_culling = True
-	surf.scene.parallel_projection = True
-	surf.scene.background = (0,0,0)
-	surf.scene.x_minus_view()
+		
+		if binarize_render_mask_volume:
+			mask_data[mask_data != 0] = 1
+		
+		# Convert mask volume to surface
+		v, f, scalar_mask_data = convert_voxel(mask_data, affine=render_mask.affine)
+		
+		# Apply smoothing if requested
+		if niter_surface_smooth_render_mask > 0:
+			v, f = vectorized_surface_smooth(v, f, adjacency=None, 
+										   number_of_iter=niter_surface_smooth_render_mask, 
+										   scalar=None, mode='taubin')
+		
+		# Create PyVista mesh for mask
+		faces = np.column_stack([np.full(f.shape[0], 3), f])
+		mask_mesh = pv.PolyData(v, faces)
+		mask_mesh.point_data['scalars'] = scalar_mask_data
+		
+		# Add mask mesh with white/gray appearance
+		plotter.add_mesh(mask_mesh,
+						color='lightgray',
+						opacity=render_mask_volume_alpha,
+						smooth_shading=True,
+						show_scalar_bar=False)
+
+	# Set up scene
+	plotter.set_background('black')
+	plotter.camera.parallel_projection = True
+	plotter.view_yz(negative=True)  # Left view
+
 	if save_figure is not None:
-		if 'x' in save_figure_orientation:
-			savename = '%s_left.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True)
-			surf.scene.x_plus_view()
-			savename = '%s_right.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True)
-		if 'y' in save_figure_orientation:
-			surf.scene.y_minus_view()
-			savename = '%s_posterior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, rotate = 270, crop_black=True)
-			surf.scene.y_plus_view()
-			savename = '%s_anterior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, rotate = 90, crop_black=True)
-		if 'z' in save_figure_orientation:
-			surf.scene.z_minus_view()
-			savename = '%s_inferior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True)
-			surf.scene.z_plus_view()
-			savename = '%s_superior.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True)
-		if 'iso' in save_figure_orientation:
-			surf.scene.isometric_view()
-			savename = '%s_isometric.%s'  % (save_figure, output_format)
-			mlab.savefig(savename, magnification=4)
-			correct_image(savename, crop_black=True)
-		write_colorbar(output_basename = save_figure,
-							cmap_array = cmap_array,
-							vmax = vmax,
-							vmin = vmin,
-							colorbar_label = None,
-							output_format = 'png',
-							abs_colorbar = False,
-							n_ticks = 11,
-							orientation='vertical')
-		mlab.clf()
-		mlab.options.offscreen = False
-	return(surf)
+		# Axial views (superior and inferior)
+		plotter.view_xy(negative=False)
+		plotter.reset_camera()
+		savename = f'{save_figure}_axial_superior.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		
+		plotter.view_xy(negative=True)
+		plotter.reset_camera()
+		savename = f'{save_figure}_axial_inferior.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+
+		# Coronal views (posterior and anterior)
+		plotter.view_xz(negative=False)
+		plotter.reset_camera()
+		savename = f'{save_figure}_coronal_posterior.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		
+		plotter.view_xz(negative=True)
+		plotter.reset_camera()
+		savename = f'{save_figure}_coronal_anterior.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+
+		# Sagittal views (right and left)
+		plotter.view_yz(negative=False)
+		plotter.reset_camera()
+		savename = f'{save_figure}_sagittal_right.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		
+		plotter.view_yz(negative=True)
+		plotter.reset_camera()
+		savename = f'{save_figure}_sagittal_left.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+
+		# Save colorbar if requested
+		if save_colour_bar:
+			write_colorbar(output_basename=save_figure,
+						  cmap_array=cmap_array,
+						  vmin=vmin,
+						  vmax=vmax,
+						  colorbar_label=color_bar_label,
+						  output_format='png',
+						  abs_colorbar=False,
+						  n_ticks=11,
+						  orientation='vertical')
+
+		plotter.close()
+		return None
+	else:
+		return plotter
+
 
 # helper functions
 def check_byteorder(arr):
@@ -1286,10 +1442,6 @@ def _plot_colormap(cmap):
 	im = ax.imshow(data, cmap=cmap)
 	fig.colorbar(im)
 	plt.show()
-
-
-def offscreen_render():
-	mlab.options.offscreen = True
 
 def convert_fs(fs_surface):
 	v, f = nib.freesurfer.read_geometry(fs_surface)
@@ -1470,26 +1622,6 @@ def vectorized_surface_smooth(v, f, adjacency = None, number_of_iter = 5, scalar
 	else:
 		return (v, f)
 
-
-def plot_freesurfer_annotation_wireframe(v, f, freesurfer_annotation_path):
-	labels, _, _ = nib.freesurfer.read_annot(freesurfer_annotation_path)
-	a = [len(set(labels[f[k]])) != 1 for k in range(len(f))]
-	scalar_out = np.zeros_like(labels).astype(np.float32)
-	scalar_out[np.unique(f[a])] = 1
-	surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
-		scalars = scalar_out, 
-		vmin = 0.5,
-		vmax = 1,
-		opacity = 0.6)
-	sc_cmap_array = np.ones((256,4))*50
-	sc_cmap_array[:,3] = 255
-	sc_cmap_array[0] = [255,255,255,0]
-	surf.actor.mapper.interpolate_scalars_before_mapping = 1
-	surf.actor.property.backface_culling = True
-	surf.module_manager.scalar_lut_manager.lut.table = sc_cmap_array
-	surf.actor.actor.force_opaque = True
-
-
 def crop_image_alpha(img_name):
 	"""
 	Crops png image based on alpha = 0.
@@ -1519,26 +1651,6 @@ def create_annot_legend(labels, rgb_values, output_basename, num_columns = None,
 	plt.savefig("%s_annot_legend.%s" % (output_basename, output_format), transparent = True)
 	crop_image_alpha("%s_annot_legend.%s" % (output_basename, output_format))
 	plt.close()
-
-
-
-def plot_freesurfer_annotation_wireframe2(v, f, freesurfer_annotation_path):
-	labels, _, _ = nib.freesurfer.read_annot(freesurfer_annotation_path)
-	a = [len(set(labels[f[k]])) != 1 for k in range(len(f))]
-	scalar_out = np.zeros_like(labels).astype(np.float32)
-	scalar_out[np.unique(f[a])] = 1
-	surf = mlab.triangular_mesh(v[:,0], v[:,1], v[:,2], f,
-		scalars = scalar_out, 
-		vmin = 0.5,
-		vmax = 1,
-		opacity = 0.6)
-	sc_cmap_array = np.ones((256,4))*50
-	sc_cmap_array[:,3] = 255
-	sc_cmap_array[0] = [255,255,255,0]
-	surf.actor.mapper.interpolate_scalars_before_mapping = 1
-	surf.actor.property.backface_culling = True
-	surf.module_manager.scalar_lut_manager.lut.table = sc_cmap_array
-	surf.actor.actor.force_opaque = True
 
 def autothreshold_both_hemispheres_mgh(lh_mgh_image, rh_mgh_image, autothreshold_alg = 'yen_abs'):
 	"""
@@ -1577,187 +1689,142 @@ def autothreshold_both_hemispheres_mgh(lh_mgh_image, rh_mgh_image, autothreshold
 	vmin, vmax = perform_autothreshold(data, threshold_type = autothreshold_alg)
 	return(vmin, vmax)
 
-
-def write_colorbar(output_basename, cmap_array, vmax, vmin = None, colorbar_label = None, output_format = 'png', abs_colorbar = False, n_ticks = 11, orientation='vertical'):
+def write_colorbar(output_basename, cmap_array, vmax, vmin=None, colorbar_label=None, 
+				  output_format='png', abs_colorbar=False, n_ticks=11, orientation='vertical'):
 	"""
 	Generate a colorbar and save it as an image file.
 
 	Parameters
 	----------
-		output_basename: str 
-			Base name of the output file.
-		cmap_array: ndarray 
-			Array of colors representing the colormap.
-		vmax: float
-			Maximum value for the colorbar.
-		vmin: float, optional
-			Minimum value for the colorbar. If not provided, it defaults to 0.
-		colorbar_label: str, optional
-			Label for the colorbar.
-		output_format: str, optional
-			Output file format. Defaults to 'png'.
-		abs_colorbar: bool, optional
-			Whether to treat the colorbar as absolute, making vmin = -vmax if True. Defaults to False.
-		n_ticks: int, optional
-			Number of ticks to be displayed on the colorbar. Defaults to 11.
-		orientation: str, optional
-			Orientation of the colorbar ('vertical' or 'horizontal'). Defaults to 'vertical'.
-	Returns:
-		None
+	output_basename : str 
+		Base name of the output file.
+	cmap_array : ndarray 
+		Array of colors representing the colormap.
+	vmax : float
+		Maximum value for the colorbar.
+	vmin : float, optional
+		Minimum value for the colorbar. If not provided, it defaults to 0.
+	colorbar_label : str, optional
+		Label for the colorbar.
+	output_format : str, optional
+		Output file format. Defaults to 'png'.
+	abs_colorbar : bool, optional
+		Whether to treat the colorbar as absolute, making vmin = -vmax if True. Defaults to False.
+	n_ticks : int, optional
+		Number of ticks to be displayed on the colorbar. Defaults to 11.
+	orientation : str, optional
+		Orientation of the colorbar ('vertical' or 'horizontal'). Defaults to 'vertical'.
+		
+	Returns
+	-------
+	None
 	"""
+	import numpy as np
+	import matplotlib.pyplot as plt
+	from matplotlib.colors import ListedColormap
+	from matplotlib.colorbar import ColorbarBase
+	
 	if abs_colorbar:
 		vmin = -vmax
 	if vmin is None:
 		vmin = 0
-	cmap = ListedColormap(np.divide(cmap_array,255))
+		
+	cmap = ListedColormap(np.divide(cmap_array, 255))
+	
 	if orientation == 'horizontal':
 		fig, ax = plt.subplots(figsize=(4, 1))
 	else:
 		fig, ax = plt.subplots(figsize=(1, 4))
+		
 	colorbar = ColorbarBase(ax, cmap=cmap, orientation=orientation)
+	
 	if colorbar_label is not None:
 		colorbar.set_label(colorbar_label)
+		
 	tick_labels = ["%1.2f" % t for t in np.linspace(vmin, vmax, n_ticks)]
-	colorbar.set_ticks(ticks = np.linspace(0, 1, n_ticks), labels = tick_labels)
+	colorbar.set_ticks(ticks=np.linspace(0, 1, n_ticks), labels=tick_labels)
+	
 	plt.tight_layout()
-	plt.savefig("%s_colorbar.%s" % (output_basename, output_format), transparent = True)
+	plt.savefig("%s_colorbar.%s" % (output_basename, output_format), transparent=True)
 	plt.close()
 
-def screenshot_scene(surf, output_basename, save_figure_orientation = 'x', output_format = 'png'):
-	surf.scene.parallel_projection = True
-	surf.scene.background = (0,0,0)
-	surf.scene.x_minus_view()
-	if 'x' in save_figure_orientation:
-		savename = '%s_left.%s'  % (output_basename, output_format)
-		mlab.savefig(savename, magnification=4)
-		correct_image(savename)
-		surf.scene.x_plus_view()
-		savename = '%s_right.%s'  % (output_basename, output_format)
-		mlab.savefig(savename, magnification=4)
-		correct_image(savename)
-	if 'y' in save_figure_orientation:
-		surf.scene.y_minus_view()
-		savename = '%s_posterior.%s'  % (output_basename, output_format)
-		mlab.savefig(savename, magnification=4)
-		correct_image(savename, rotate = 270, b_transparent = True)
-		surf.scene.y_plus_view()
-		savename = '%s_anterior.%s'  % (output_basename, output_format)
-		mlab.savefig(savename, magnification=4)
-		correct_image(savename, rotate = 90, b_transparent = True)
-	if 'z' in save_figure_orientation:
-		surf.scene.z_minus_view()
-		savename = '%s_inferior.%s'  % (output_basename, output_format)
-		mlab.savefig(savename, magnification=4)
-		correct_image(savename)
-		surf.scene.z_plus_view()
-		savename = '%s_superior.%s'  % (output_basename, output_format)
-		mlab.savefig(savename, magnification=4)
-		correct_image(savename)
-	if 'iso' in save_figure_orientation:
-		surf.scene.isometric_view()
-		savename = '%s_isometric.%s'  % (output_basename, output_format)
-		mlab.savefig(savename, magnification=4)
-		correct_image(savename)
-	mlab.clf()
-
-
 def apply_affine_to_scalar_field(data, affine):
-	"""
-	Applies the given affine transformation to the coordinates of the scalar field.
+    """
+    Creates a PyVista ImageData object with applied affine transformation.
+    
+    Parameters
+    ----------
+    data : array-like
+        The input scalar field data.
+    affine : array-like
+        The affine transformation matrix to be applied.
+        
+    Returns
+    -------
+    volume : pv.ImageData
+        The PyVista ImageData object with transformed coordinates.
+    """
+    data = np.array(data)
+    if data.ndim == 4:
+        print("4D volume detected. Only the first volume will be displayed.")
+        data = data[:,:,:,0]
+    
+    # Get spacing and origin from affine
+    spacing = np.abs(np.diag(affine)[:3])
+    origin = affine[:3, 3]
+    
+    # Create PyVista ImageData
+    volume = pv.ImageData(dimensions=data.shape[::-1], spacing=spacing[::-1], origin=origin[::-1])
+    volume.point_data['scalars'] = data.ravel(order='F')
+    
+    return volume
 
-	Parameters
-	----------
-	data : array-like
-		The input scalar field data.
-
-	affine : array-like
-		The affine transformation matrix to be applied.
-
-	Returns
-	-------
-	src : mlab.pipeline.scalar_field
-		The scalar field source with transformed coordinates.
-
-	Notes
-	-----
-	- If the input data is 4D, only the first volume will be displayed.
-	- The function assumes that the scalar field data has non-zero values at specific coordinates.
-
-	"""
-	data = np.array(data)
-	if data.ndim == 4: # double check
-		print("4D volume detected. Only the first volume will be displayed.")
-		data = data[:,:,:,0]
-	size_x, size_y, size_z = data.shape
-	x,y,z = np.where(data!=55378008)
-	coord = np.column_stack((x,y))
-	coord = np.column_stack((coord,z))
-	coord_array = nib.affines.apply_affine(affine, coord)
-	xi = coord_array[:,0].reshape(size_x, size_y, size_z)
-	yi = coord_array[:,1].reshape(size_x, size_y, size_z)
-	zi = coord_array[:,2].reshape(size_x, size_y, size_z)
-	src = mlab.pipeline.scalar_field(xi, yi, zi, data)
-	return(src)
-
-def apply_affine_to_contour3d(data, affine, lthresh, hthresh, name = "", contours=15, opacity=0.7):
-	"""
-	Applies the given affine transformation to the coordinates of the 3D contour data.
-
-	Parameters
-	----------
-	data : array-like
-		The input 3D contour data.
-
-	affine : array-like
-		The affine transformation matrix to be applied.
-
-	lthresh : float
-		The lower threshold value for the contours.
-
-	hthresh : float
-		The upper threshold value for the contours.
-
-	name : str
-		The name of the contour visualization.
-
-	contours : int, optional
-		The number of contours to be generated (default is 15).
-
-	opacity : float, optional
-		The opacity of the contours (default is 0.7).
-
-	Returns
-	-------
-	src : mlab.pipeline.surface
-		The contour surface with transformed coordinates.
-
-	Notes
-	-----
-	- If the input data is 4D, only the first volume will be displayed.
-	- The function assumes that the contour data has non-zero values at specific coordinates.
-
-	"""
-	data = np.array(data)
-	if data.ndim == 4:
-		print("4D volume detected. Only the first volume will be displayed.")
-		data = data[:, :, :, 0]
-
-	size_x, size_y, size_z = data.shape
-	x, y, z = np.where(data != 55378008)
-	coord = np.column_stack((x, y))
-	coord = np.column_stack((coord, z))
-	coord_array = nib.affines.apply_affine(affine, coord)
-	contour_list = np.arange(lthresh, hthresh, ((hthresh - lthresh) / contours)).tolist()
-	xi = coord_array[:, 0].reshape(size_x, size_y, size_z)
-	yi = coord_array[:, 1].reshape(size_x, size_y, size_z)
-	zi = coord_array[:, 2].reshape(size_x, size_y, size_z)
-	src = mlab.contour3d(xi, yi, zi, data,
-						 vmin=lthresh,
-						 vmax=hthresh,
-						 opacity=opacity,
-						 name=name,
-						 contours=contour_list)
-	return(src)
+def apply_affine_to_contour3d(data, affine, lthresh, hthresh, name="", contours=15, opacity=0.7):
+    """
+    Creates contour surfaces from 3D data with affine transformation using PyVista.
+    
+    Parameters
+    ----------
+    data : array-like
+        The input 3D contour data.
+    affine : array-like
+        The affine transformation matrix to be applied.
+    lthresh : float
+        The lower threshold value for the contours.
+    hthresh : float
+        The upper threshold value for the contours.
+    name : str
+        The name of the contour visualization.
+    contours : int, optional
+        The number of contours to be generated (default is 15).
+    opacity : float, optional
+        The opacity of the contours (default is 0.7).
+        
+    Returns
+    -------
+    contour_surfaces : pv.PolyData
+        The contour surfaces with transformed coordinates.
+    """
+    data = np.array(data)
+    if data.ndim == 4:
+        print("4D volume detected. Only the first volume will be displayed.")
+        data = data[:, :, :, 0]
+    
+    # Get spacing and origin from affine
+    spacing = np.abs(np.diag(affine)[:3])
+    origin = affine[:3, 3]
+    
+    # Create PyVista ImageData
+    volume = pv.ImageData(dimensions=data.shape[::-1], spacing=spacing[::-1], origin=origin[::-1])
+    volume.point_data['scalars'] = data.ravel(order='F')
+    
+    # Create contour levels
+    contour_list = np.linspace(lthresh, hthresh, contours)
+    
+    # Generate contours
+    contour_surfaces = volume.contour(isosurfaces=contour_list, scalars='scalars')
+    
+    return contour_surfaces
 
 # returns the non-empty range
 def nonempty_coordinate_range(data, affine):
@@ -1941,7 +2008,7 @@ def get_cmap_array(lut, background_alpha = 255, image_alpha = 1.0, zero_lower = 
 	Returns
 	-------
 	cmap_array : ndarray
-	    Custom RGBA colormap array of shape (256, 4) with values in the range of [0, 255].
+		Custom RGBA colormap array of shape (256, 4) with values in the range of [0, 255].
 	"""
 	base_color[3] = background_alpha
 	if lut.endswith('_r'):

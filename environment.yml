@@ -1,0 +1,21 @@
+name: pycerebralplots_env
+channels:
+  - conda-forge  
+  - defaults
+dependencies:
+  - python>=3.8
+  - numpy
+  - scipy
+  - matplotlib
+  - pandas
+  - nibabel
+  - scikit-image
+  - imageio
+  - pyvista
+  - jupyter          # for notebooks
+  - ipython          # better interactive shell
+  - pytest           # for testing
+  - black            # code formatting
+  - pip
+  - pip:
+    - imageio[ffmpeg]
