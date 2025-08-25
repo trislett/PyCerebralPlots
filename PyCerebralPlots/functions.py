@@ -23,7 +23,7 @@ import imageio.v2 as imageio
 import numpy as np
 import warnings
 import matplotlib.cbook
-
+import pyvista as pv
 import nibabel as nib
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
@@ -32,8 +32,9 @@ from matplotlib.colors import LinearSegmentedColormap, ListedColormap
 from matplotlib.colorbar import ColorbarBase
 from scipy import ndimage
 from scipy.special import erf
+from scipy.ndimage import convolve
 from skimage import filters, measure
-import pyvista as pv
+from skimage.measure import marching_cubes
 from warnings import warn
 
 # get static resources
@@ -237,9 +238,6 @@ def display_matplotlib_luts():
 	# This example comes from the Cookbook on www.scipy.org. According to the
 	# history, Andrew Straw did the conversion from an old page, but it is
 	# unclear who the original author is.
-
-#	plt.switch_backend('Qt4Agg')
-	warnings.filterwarnings("ignore",category=matplotlib.cbook.mplDeprecation)
 
 	a = np.linspace(0, 1, 256).reshape(1,-1)
 	a = np.vstack((a,a))
@@ -1113,6 +1111,225 @@ def visualize_surface_with_scalar_data(surface, mgh_image=None, cmap_array=None,
 	else:
 		return plotter
 
+def visualize_cube_voxel_with_scalar_data(
+						voxel_data_positive, voxel_data_negative=None, threshold=0.95, 
+						vmin=0, vmax=1.0, clip=True, voxel_alpha=0.7, 
+						positive_cmap='red-yellow', negative_cmap='blue-lightblue', 
+						surface_names=None, surface_alpha=0.2, mask_data=None, 
+						mask_color='white', mask_alpha=0.2,
+						save_figure=None, output_format='png', 
+						output_transparent_background=True, color_bar_label=None,
+						off_screen_render=False):
+	"""
+	Convert voxel-wise MRI statistics to a 3D mesh representation with brain surfaces and mask surface.
+	Optimized version using batch processing.
+	"""
+	from skimage.measure import marching_cubes
+	from scipy.ndimage import convolve
+	
+	# Get colormap arrays and create matplotlib colormaps
+	cmap_positive = ListedColormap(get_cmap_array(positive_cmap)/255)
+	cmap_negative = ListedColormap(get_cmap_array(negative_cmap)/255)
+
+	# Create plotter
+	plotter = pv.Plotter(off_screen=off_screen_render or (save_figure is not None))
+	
+	def create_batch_cubes(indices, values, cmap, cube_size=1.0):
+		"""Create multiple cubes efficiently as a single mesh"""
+		if len(indices) == 0:
+			return None
+		
+		# Create a single cube template
+		cube_template = pv.Cube(x_length=cube_size, y_length=cube_size, z_length=cube_size)
+		cube_points = cube_template.points
+		
+		# Parse PyVista faces format properly
+		faces_raw = cube_template.faces
+		cube_faces = []
+		i = 0
+		while i < len(faces_raw):
+			n_verts = faces_raw[i]
+			face = faces_raw[i+1:i+1+n_verts]
+			cube_faces.append(face)
+			i += n_verts + 1
+		cube_faces = np.array(cube_faces)
+		
+		n_cubes = len(indices)
+		n_points_per_cube = len(cube_points)
+		n_faces_per_cube = len(cube_faces)
+		
+		# Pre-allocate arrays
+		all_points = np.zeros((n_cubes * n_points_per_cube, 3))
+		all_colors = np.zeros((n_cubes * n_points_per_cube, 3))
+		
+		# Build faces list
+		faces_list = []
+		
+		# Batch process all cubes
+		for i, (idx, val) in enumerate(zip(indices, values)):
+			x, y, z = idx
+			
+			# Translate cube points to position
+			start_pt = i * n_points_per_cube
+			end_pt = start_pt + n_points_per_cube
+			all_points[start_pt:end_pt] = cube_points + [x, y, z]
+			
+			# Add faces for this cube
+			for face in cube_faces:
+				face_with_count = [len(face)] + (face + start_pt).tolist()
+				faces_list.extend(face_with_count)
+			
+			# Set colors for all points of this cube
+			color = cmap(val)[:3]
+			all_colors[start_pt:end_pt] = color
+		
+		# Create mesh
+		mesh = pv.PolyData(all_points, faces_list)
+		mesh.point_data['colors'] = (all_colors * 255).astype(np.uint8)
+		
+		return mesh
+	
+	# Process positive voxel data
+	pos_indices = np.where(voxel_data_positive > threshold)
+	if len(pos_indices[0]) > 0:
+		pos_coords = list(zip(pos_indices[0], pos_indices[1], pos_indices[2]))
+		
+		# Get and normalize values
+		if clip:
+			pos_values = np.clip(voxel_data_positive[pos_indices], threshold, vmax)
+		else:
+			pos_values = voxel_data_positive[pos_indices]
+		
+		pos_norm_values = (pos_values - threshold) / (vmax - threshold)
+		
+		# Create batch mesh
+		pos_mesh = create_batch_cubes(pos_coords, pos_norm_values, cmap_positive)
+		if pos_mesh is not None:
+			plotter.add_mesh(pos_mesh, scalars='colors', rgb=True, 
+							opacity=voxel_alpha, show_scalar_bar=False)
+	
+	# Process negative voxel data if provided
+	if voxel_data_negative is not None:
+		neg_indices = np.where(voxel_data_negative > threshold)
+		if len(neg_indices[0]) > 0:
+			neg_coords = list(zip(neg_indices[0], neg_indices[1], neg_indices[2]))
+			
+			if clip:
+				neg_values = np.clip(voxel_data_negative[neg_indices], threshold, vmax)
+			else:
+				neg_values = voxel_data_negative[neg_indices]
+			
+			neg_norm_values = (neg_values - threshold) / (vmax - threshold)
+			
+			# Create batch mesh
+			neg_mesh = create_batch_cubes(neg_coords, neg_norm_values, cmap_negative)
+			if neg_mesh is not None:
+				plotter.add_mesh(neg_mesh, scalars='colors', rgb=True, 
+								opacity=voxel_alpha, show_scalar_bar=False)
+	
+	# Add brain surfaces if provided
+	if surface_names:
+		for sn in surface_names:
+			vertices, faces = load_surface_geometry(sn)
+			faces_pv = np.column_stack((np.full(len(faces), 3), faces)).ravel()
+			mesh = pv.PolyData(vertices, faces_pv)
+			plotter.add_mesh(mesh, color='lightgray', opacity=surface_alpha, 
+							smooth_shading=True, show_scalar_bar=False)
+	
+	# Add mask as a surface if provided
+	if mask_data is not None:
+		binary_mask = (mask_data > 0).astype(np.int8)
+		try:
+			verts, faces, normals, values = marching_cubes(binary_mask, level=0.5)
+			mask_faces = np.column_stack((np.full(len(faces), 3), faces))
+			mask_mesh = pv.PolyData(verts, mask_faces)
+			plotter.add_mesh(mask_mesh, color=mask_color, opacity=mask_alpha, 
+							smooth_shading=True, show_scalar_bar=False)
+			
+		except Exception as e:
+			print(f"Error creating mask surface: {e}")
+			print("Falling back to simple mask outline...")
+			kernel = np.ones((3, 3, 3), dtype=np.int8)
+			kernel[1, 1, 1] = 0  
+			neighbor_count = convolve(binary_mask, kernel, mode='constant', cval=0)
+			boundary_mask = (binary_mask > 0) & (neighbor_count < 26)
+			bx, by, bz = np.where(boundary_mask)
+			points = np.column_stack((bx, by, bz))
+			if len(points) > 0:
+				boundary_point_cloud = pv.PolyData(points)
+				plotter.add_mesh(boundary_point_cloud, color=mask_color, 
+								point_size=5, render_points_as_spheres=True,
+								show_scalar_bar=False)
+
+	# Set up scene
+	plotter.set_background('black')
+	plotter.camera.parallel_projection = True
+	plotter.view_yz(negative=True)  # Left view
+
+	if save_figure is not None:
+		# Axial views (superior and inferior)
+		plotter.view_xy(negative=False)
+		plotter.reset_camera()
+		savename = f'{save_figure}_axial_superior.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		
+		plotter.view_xy(negative=True)
+		plotter.reset_camera()
+		savename = f'{save_figure}_axial_inferior.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+
+		# Coronal views (posterior and anterior)
+		plotter.view_xz(negative=False)
+		plotter.reset_camera()
+		savename = f'{save_figure}_coronal_posterior.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		
+		plotter.view_xz(negative=True)
+		plotter.reset_camera()
+		savename = f'{save_figure}_coronal_anterior.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+
+		# Sagittal views (right and left)
+		plotter.view_yz(negative=False)
+		plotter.reset_camera()
+		savename = f'{save_figure}_sagittal_right.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+		
+		plotter.view_yz(negative=True)
+		plotter.reset_camera()
+		savename = f'{save_figure}_sagittal_left.{output_format}'
+		plotter.screenshot(savename, transparent_background=output_transparent_background)
+		correct_image(savename, crop_black=True, b_transparent=output_transparent_background)
+
+		# Save colorbar - determine which colormap to use for colorbar
+		# Use positive colormap if it has data, otherwise negative
+		if len(pos_indices[0]) > 0:
+			cmap_array = get_cmap_array(positive_cmap)
+		elif voxel_data_negative is not None and len(neg_indices[0]) > 0:
+			cmap_array = get_cmap_array(negative_cmap)
+		else:
+			cmap_array = get_cmap_array(positive_cmap)  # fallback
+		
+		write_colorbar(output_basename=save_figure,
+					  cmap_array=cmap_array,
+					  vmax=vmax,
+					  vmin=threshold,  # Use threshold as vmin for colorbar
+					  colorbar_label=color_bar_label,
+					  output_format='png',
+					  abs_colorbar=False,
+					  n_ticks=11,
+					  orientation='vertical')
+
+		plotter.close()
+		return None
+	else:
+		return plotter
+
 def visualize_volume_to_surface(nifti_image_path, cmap_array=None, nifti_image_mask=None, 
 							   volume_alpha=0.8, vmin=None, vmax=None, 
 							   autothreshold_scalar=False, autothreshold_alg='yen_abs', 
@@ -1632,7 +1849,6 @@ def crop_image_alpha(img_name):
 	img = img[np.min(np.argwhere(ind0)):np.max(np.argwhere(ind0)), np.min(np.argwhere(ind1)):np.max(np.argwhere(ind1)), :]
 	imageio.imsave(img_name, img)
 
-
 def create_annot_legend(labels, rgb_values, output_basename, num_columns = None, output_format = 'png', ratio = 4):
 	num_boxes = len(labels)
 	if num_columns is None:
@@ -1749,82 +1965,82 @@ def write_colorbar(output_basename, cmap_array, vmax, vmin=None, colorbar_label=
 	plt.close()
 
 def apply_affine_to_scalar_field(data, affine):
-    """
-    Creates a PyVista ImageData object with applied affine transformation.
-    
-    Parameters
-    ----------
-    data : array-like
-        The input scalar field data.
-    affine : array-like
-        The affine transformation matrix to be applied.
-        
-    Returns
-    -------
-    volume : pv.ImageData
-        The PyVista ImageData object with transformed coordinates.
-    """
-    data = np.array(data)
-    if data.ndim == 4:
-        print("4D volume detected. Only the first volume will be displayed.")
-        data = data[:,:,:,0]
-    
-    # Get spacing and origin from affine
-    spacing = np.abs(np.diag(affine)[:3])
-    origin = affine[:3, 3]
-    
-    # Create PyVista ImageData
-    volume = pv.ImageData(dimensions=data.shape[::-1], spacing=spacing[::-1], origin=origin[::-1])
-    volume.point_data['scalars'] = data.ravel(order='F')
-    
-    return volume
+	"""
+	Creates a PyVista ImageData object with applied affine transformation.
+	
+	Parameters
+	----------
+	data : array-like
+		The input scalar field data.
+	affine : array-like
+		The affine transformation matrix to be applied.
+		
+	Returns
+	-------
+	volume : pv.ImageData
+		The PyVista ImageData object with transformed coordinates.
+	"""
+	data = np.array(data)
+	if data.ndim == 4:
+		print("4D volume detected. Only the first volume will be displayed.")
+		data = data[:,:,:,0]
+	
+	# Get spacing and origin from affine
+	spacing = np.abs(np.diag(affine)[:3])
+	origin = affine[:3, 3]
+	
+	# Create PyVista ImageData
+	volume = pv.ImageData(dimensions=data.shape[::-1], spacing=spacing[::-1], origin=origin[::-1])
+	volume.point_data['scalars'] = data.ravel(order='F')
+	
+	return volume
 
 def apply_affine_to_contour3d(data, affine, lthresh, hthresh, name="", contours=15, opacity=0.7):
-    """
-    Creates contour surfaces from 3D data with affine transformation using PyVista.
-    
-    Parameters
-    ----------
-    data : array-like
-        The input 3D contour data.
-    affine : array-like
-        The affine transformation matrix to be applied.
-    lthresh : float
-        The lower threshold value for the contours.
-    hthresh : float
-        The upper threshold value for the contours.
-    name : str
-        The name of the contour visualization.
-    contours : int, optional
-        The number of contours to be generated (default is 15).
-    opacity : float, optional
-        The opacity of the contours (default is 0.7).
-        
-    Returns
-    -------
-    contour_surfaces : pv.PolyData
-        The contour surfaces with transformed coordinates.
-    """
-    data = np.array(data)
-    if data.ndim == 4:
-        print("4D volume detected. Only the first volume will be displayed.")
-        data = data[:, :, :, 0]
-    
-    # Get spacing and origin from affine
-    spacing = np.abs(np.diag(affine)[:3])
-    origin = affine[:3, 3]
-    
-    # Create PyVista ImageData
-    volume = pv.ImageData(dimensions=data.shape[::-1], spacing=spacing[::-1], origin=origin[::-1])
-    volume.point_data['scalars'] = data.ravel(order='F')
-    
-    # Create contour levels
-    contour_list = np.linspace(lthresh, hthresh, contours)
-    
-    # Generate contours
-    contour_surfaces = volume.contour(isosurfaces=contour_list, scalars='scalars')
-    
-    return contour_surfaces
+	"""
+	Creates contour surfaces from 3D data with affine transformation using PyVista.
+	
+	Parameters
+	----------
+	data : array-like
+		The input 3D contour data.
+	affine : array-like
+		The affine transformation matrix to be applied.
+	lthresh : float
+		The lower threshold value for the contours.
+	hthresh : float
+		The upper threshold value for the contours.
+	name : str
+		The name of the contour visualization.
+	contours : int, optional
+		The number of contours to be generated (default is 15).
+	opacity : float, optional
+		The opacity of the contours (default is 0.7).
+		
+	Returns
+	-------
+	contour_surfaces : pv.PolyData
+		The contour surfaces with transformed coordinates.
+	"""
+	data = np.array(data)
+	if data.ndim == 4:
+		print("4D volume detected. Only the first volume will be displayed.")
+		data = data[:, :, :, 0]
+	
+	# Get spacing and origin from affine
+	spacing = np.abs(np.diag(affine)[:3])
+	origin = affine[:3, 3]
+	
+	# Create PyVista ImageData
+	volume = pv.ImageData(dimensions=data.shape[::-1], spacing=spacing[::-1], origin=origin[::-1])
+	volume.point_data['scalars'] = data.ravel(order='F')
+	
+	# Create contour levels
+	contour_list = np.linspace(lthresh, hthresh, contours)
+	
+	# Generate contours
+	contour_surfaces = volume.contour(isosurfaces=contour_list, scalars='scalars')
+	
+	return contour_surfaces
 
 # returns the non-empty range
 def nonempty_coordinate_range(data, affine):
@@ -1882,9 +2098,6 @@ def display_matplotlib_luts():
 	# This example comes from the Cookbook on www.scipy.org. According to the
 	# history, Andrew Straw did the conversion from an old page, but it is
 	# unclear who the original author is.
-
-#	plt.switch_backend('Qt4Agg')
-	warnings.filterwarnings("ignore",category=matplotlib.cbook.mplDeprecation)
 
 	a = np.linspace(0, 1, 256).reshape(1,-1)
 	a = np.vstack((a,a))
@@ -2177,10 +2390,81 @@ def perform_autothreshold(data, threshold_type = 'yen', z = 2.3264):
 			uthres = data.max()
 		return(lthres, uthres)
 
-# saves the output dictionary of argparse to a file
-def write_dict(filename, outnamespace):
-	with open(filename, "wb") as o:
-		for k in outnamespace.__dict__:
-			if outnamespace.__dict__[k] is not None:
-				o.write("%s : %s\n" % (k, outnamespace.__dict__[k]))
-		o.close()
+def load_surface_geometry(path_to_surface):
+	"""
+	Load surface geometry (vertices and faces) from various neuroimaging file formats.
+	
+	Parameters
+	----------
+	path_to_surface : str
+		Path to surface file. Supported formats:
+		- FreeSurfer (.srf)
+		- GIFTI (.surf.gii)
+		- CIFTI (.d*.nii)
+		- VTK (.vtk)
+	
+	Returns
+	-------
+	v : np.ndarray
+		Vertex coordinates (N, 3)
+	f : np.ndarray
+		Face connectivity indices (M, 3)
+	
+	Raises
+	------
+	ValueError
+		If file format is not supported or surface data cannot be extracted
+	"""
+	if not os.path.exists(path_to_surface):
+		raise FileNotFoundError("Surface file not found: [%s]" % path_to_surface)
+	ext = os.path.splitext(path_to_surface)[1].lower()
+
+	# extra checks for ext
+	if path_to_surface.endswith('.dtseries.nii') or path_to_surface.endswith('.dtseries.nii.gz'):
+		ext = '.dtseries.nii'
+	if path_to_surface.endswith('.dscalar.nii') or path_to_surface.endswith('.dscalar.nii.gz'):
+		ext = '.dscalar.nii'
+	if path_to_surface.endswith('.dlabel.nii') or path_to_surface.endswith('.dlabel.nii.gz'):
+		ext = '.dlabel.nii'
+	if ext == '.srf':
+		v, f = nib.freesurfer.io.read_geometry(path_to_surface)
+		return(v, f)
+	elif ext == '.gii':
+		gii = nib.load(path_to_surface)
+		v, f = None, None
+		for da in gii.darrays:
+			if da.intent == nib.nifti1.intent_codes['NIFTI_INTENT_POINTSET']:
+				v = da.data
+			elif da.intent == nib.nifti1.intent_codes['NIFTI_INTENT_TRIANGLE']:
+				f = da.data
+		if v is None or f is None:
+			raise ValueError("GIFTI file missing vertex or face data")
+		return(v, f)
+	elif ext in ('.dtseries.nii', '.dscalar.nii', '.dlabel.nii'):
+		if path_to_surface.endswith('.gz'):
+			outfile = 'tempfile.nii'
+			with gzip.open(path_to_surface, 'rb') as file_in:
+				with open(outfile, 'wb') as file_out:
+					shutil.copyfileobj(file_in, file_out)
+			cifti = nib.load(outfile)
+			os.remove(outfile)
+		else:
+			cifti = nib.load(path_to_surface)
+		for brain_model in cifti.header.get_axis(1).iter_structures():
+			print(brain_model)
+			if brain_model[0] == 'CIFTI_MODEL_TYPE_SURFACE':
+				v, f = brain_model[1].surface.surface_vertices, brain_model[1].surface.surface_faces
+				return(v, f)
+		raise ValueError("No surface data found in CIFTI file")
+	elif ext == '.vtk':
+		mesh = pv.read(path_to_surface)
+		v = mesh.points
+		f = mesh.faces.reshape(-1, 4)[:, 1:4]
+		return(v, f)
+	else:
+		print("Warning: attempting to load [%s] as freesurfer surface mesh" % path_to_surface)
+		try:
+			v, f = nib.freesurfer.io.read_geometry(path_to_surface)
+			return(v, f)
+		except:
+			raise ValueError("Unsupported surface file [%s] " % path_to_surface)
