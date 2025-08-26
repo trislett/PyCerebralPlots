@@ -421,9 +421,10 @@ def get_cmap_array(lut, background_alpha = 255, image_alpha = 1.0, zero_lower = 
 def visualize_surface_pack(surf_pack, alpha=1.0, atlas_values=None, vmin=None, vmax=None, 
 						  cmap_array=None, alpha_array=None, uniform_lighting=True, 
 						  niter_surface_smooth=None, save_figure=None, 
-						  save_figure_orientation='xz', output_format='png', 
-						  output_transparent_background=True, save_colour_bar=True, 
-						  off_screen_render=False, use_lapacian=False):
+						  output_format='png', render_mask_volume=None, 
+						  binarize_render_mask_volume=True, render_mask_volume_alpha=0.5,
+						  niter_surface_smooth_render_mask=0, output_transparent_background=True, 
+						  save_colour_bar=True, off_screen_render=False, use_lapacian=False):
 	"""
 	Visualize a collection of brain surfaces with customizable rendering options.
 	
@@ -447,8 +448,6 @@ def visualize_surface_pack(surf_pack, alpha=1.0, atlas_values=None, vmin=None, v
 		Number of smoothing iterations to apply to surfaces.
 	save_figure : str, optional
 		Base filename for saving images. If None, displays interactively.
-	save_figure_orientation : str, default='xz'
-		Orientations to save ('x', 'y', 'z', 'iso' combinations).
 	output_format : str, default='png'
 		Output image format ('png', 'jpg', etc.).
 	output_transparent_background : bool, default=True
@@ -470,9 +469,7 @@ def visualize_surface_pack(surf_pack, alpha=1.0, atlas_values=None, vmin=None, v
 	>>> surf_files = get_surface_pack('aseg')
 	>>> plotter = visualize_surface_pack(surf_files[:5], alpha=0.8)
 	>>> 
-	>>> # Save multiple orientations
-	>>> visualize_surface_pack(surf_files, save_figure='brain_surfaces',
-	...					   save_figure_orientation='xyz')
+	>>> visualize_surface_pack(surf_files, save_figure='brain_surfaces')
 	"""
 	smooth_mode = 'taubin'
 	if use_lapacian:
@@ -505,6 +502,37 @@ def visualize_surface_pack(surf_pack, alpha=1.0, atlas_values=None, vmin=None, v
 		assert len(alpha_array) == len(surf_pack), "Error: the lengths of alpha_array and surf_pack must be the same."
 	
 	assert np.mean(alpha_array) != 0., "Error: the alpha_array contains only zero values"
+
+
+	# Render mask volume if provided
+	if render_mask_volume is not None:
+		render_mask = nib.as_closest_canonical(nib.load(render_mask_volume))
+		mask_data = check_byteorder(np.asanyarray(render_mask.dataobj))
+		
+		if binarize_render_mask_volume:
+			mask_data[mask_data != 0] = 1
+		
+		# Convert mask volume to surface
+		v, f, scalar_mask_data = convert_voxel(mask_data, affine=render_mask.affine)
+		
+		# Apply smoothing if requested
+		if niter_surface_smooth_render_mask > 0:
+			v, f = vectorized_surface_smooth(v, f, adjacency=None, 
+										   number_of_iter=niter_surface_smooth_render_mask, 
+										   scalar=None, mode='taubin')
+		
+		# Create PyVista mesh for mask
+		faces = np.column_stack([np.full(f.shape[0], 3), f])
+		mask_mesh = pv.PolyData(v, faces)
+		mask_mesh.point_data['scalars'] = scalar_mask_data
+		
+		# Add mask mesh with white/gray appearance
+		plotter.add_mesh(mask_mesh,
+						color='lightgray',
+						opacity=render_mask_volume_alpha,
+						smooth_shading=True,
+						show_scalar_bar=False)
+
 	
 	# Add surfaces to plotter
 	for s, surface_path in enumerate(surf_pack):
