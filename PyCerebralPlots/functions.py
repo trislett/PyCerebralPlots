@@ -319,7 +319,7 @@ def display_matplotlib_luts():
 
 
 # Get RGBA colormap [uint8, uint8, uint8, uint8]
-def get_cmap_array(lut, background_alpha = 255, image_alpha = 1.0, zero_lower = True, zero_upper = False, base_color = [227,218,201,0], c_reverse = False):
+def get_cmap_array(lut, background_alpha = 255, image_alpha = 1.0, zero_lower = False, zero_upper = False, base_color = [227,218,201,0], c_reverse = False):
 	"""
 	Generate an RGBA colormap array based on the specified lookup table (lut) and parameters.
 	Use display_matplotlib_luts() to see the available luts.
@@ -486,8 +486,9 @@ def visualize_surface_pack(surf_pack, alpha=1.0, atlas_values=None, vmin=None, v
 			vmin = atlas_values.min()
 		if vmax is None:
 			vmax = atlas_values.max()
-		if (atlas_values.max() > 1.) or (atlas_values.min() < -1.0):
-			print("Warning: normalizing the data to min (%1.3f) and max values (%1.3f). It is probably better to set vmin, vmax." % (vmin, vmax))
+		if (vmin is not None) or (vmax is not None):
+			if (atlas_values.max() > 1.) or (atlas_values.min() < -1.0):
+				print("Warning: normalizing the data to min (%1.3f) and max values (%1.3f). It is probably better to set vmin, vmax." % (vmin, vmax))
 		atlas_values = (atlas_values - vmin) / (vmax - vmin)
 	
 	# Set up colormap
@@ -500,7 +501,6 @@ def visualize_surface_pack(surf_pack, alpha=1.0, atlas_values=None, vmin=None, v
 		alpha_array = np.ones((len(surf_pack))) * alpha
 	else:
 		assert len(alpha_array) == len(surf_pack), "Error: the lengths of alpha_array and surf_pack must be the same."
-	
 	assert np.mean(alpha_array) != 0., "Error: the alpha_array contains only zero values"
 
 
@@ -611,15 +611,15 @@ def visualize_surface_pack(surf_pack, alpha=1.0, atlas_values=None, vmin=None, v
 		return plotter
 
 def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path, 
-								   atlas_values=None, cmap_array=None, 
-								   add_wireframe=True, uniform_lighting=True, 
-								   vmin=None, vmax=None, autothreshold_scalar=False, 
-								   autothreshold_alg='yen_abs', absmin=None, 
-								   absminmax=False, alpha=1.0, niter_surface_smooth=0, 
-								   save_figure=None, output_format='png', 
-								   output_transparent_background=True, 
-								   flat_surface=False, filter_legend_strings=None, 
-								   off_screen_render=False, use_lapacian=False):
+									atlas_values=None, cmap_array=None, 
+									add_wireframe=True, uniform_lighting=True, 
+									vmin=None, vmax=None, autothreshold_scalar=False, 
+									autothreshold_alg='yen_abs', absmin=None, 
+									absminmax=False, alpha=1.0, niter_surface_smooth=0, 
+									save_figure=None, output_format='png', 
+									output_transparent_background=True, 
+									flat_surface=False, filter_legend_strings=None, 
+									off_screen_render=False, use_lapacian=False):
 	"""
 	Visualize a FreeSurfer brain surface with annotation-based coloring.
 	
@@ -761,7 +761,6 @@ def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path,
 			vmin = np.nanmin(scalar_data)
 		if vmax is None:
 			vmax = np.nanmax(scalar_data)
-			
 		if absminmax:
 			vmax = np.max([np.abs(vmin), np.abs(vmax)])
 			vmin = -np.max([np.abs(vmin), np.abs(vmax)])
@@ -769,9 +768,10 @@ def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path,
 		# Convert scalar values to colors using colormap
 		cmap_func = ListedColormap((cmap_array / 255.0))
 		# Normalize scalar data to [0, 1] range for colormap
+		scalar_data = np.clip(scalar_data, a_max=vmax, a_min=vmin)
 		normalized_data = (scalar_data - vmin) / (vmax - vmin) if vmax != vmin else np.zeros_like(scalar_data)
 		vertex_colors = (cmap_func(normalized_data)[:, :3] * 255).astype(np.uint8)
-		
+
 		# Add wireframe (boundary highlighting) if requested
 		if add_wireframe:
 			# Find faces where vertices have different labels (boundaries)
@@ -779,7 +779,7 @@ def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path,
 			boundary_vertices = np.unique(f[boundary_faces])
 			# Set boundary vertices to white
 			vertex_colors[boundary_vertices] = [169, 169, 169]
-		
+
 		# Add colors to mesh
 		mesh.point_data['colors'] = vertex_colors
 		
@@ -851,14 +851,14 @@ def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path,
 		# Save colorbar or legend
 		if atlas_values is not None:
 			write_colorbar(output_basename=save_figure,
-						  cmap_array=cmap_array,
-						  vmax=vmax,
-						  vmin=vmin,
-						  colorbar_label=None,
-						  output_format='png',
-						  abs_colorbar=False,
-						  n_ticks=11,
-						  orientation='vertical')
+							cmap_array=cmap_array,
+							vmax=vmax,
+							vmin=vmin,
+							colorbar_label=None,
+							output_format='png',
+							abs_colorbar=False,
+							n_ticks=11,
+						 	orientation='vertical')
 		else:
 			names = np.array(names)[roi_indices]  # Use roi_indices instead of np.unique(labels)
 			names = [name.decode('utf-8') for name in names]
@@ -868,8 +868,8 @@ def visualize_freesurfer_annotation(surface_path, freesurfer_annotation_path,
 				for filter_string in filter_legend_strings:
 					names = [name.replace(filter_string, "") for name in names]
 			create_annot_legend(labels=names, 
-							  rgb_values=ctab[roi_indices][:, :3], 
-							  output_basename=save_figure)
+								rgb_values=ctab[roi_indices][:, :3], 
+								output_basename=save_figure)
 		
 		plotter.close()
 		return None
